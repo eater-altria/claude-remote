@@ -21,6 +21,7 @@ import { ModelEffortSheet, modelLabel, effortLabel } from '../../components/Mode
 import { InfoSheet, type InfoKind } from '../../components/InfoSheet';
 import { FileMentionPalette } from '../../components/FileMentionPalette';
 import { FileCard } from '../../components/FileCard';
+import { ImageCard } from '../../components/ImageCard';
 import { PERMISSION_MODE_LABELS, type EffortLevel, type FsEntry, type PermissionMode, type SlashCommandDTO } from '../../api/protocol';
 
 const MODE_CYCLE: PermissionMode[] = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
@@ -446,6 +447,8 @@ function Item({ item, sessionId }: { item: TranscriptItem; sessionId: string }) 
       );
     case 'file':
       return <FileCard sessionId={sessionId} item={item} />;
+    case 'image':
+      return <ImageCard sessionId={sessionId} item={item} />;
     default:
       return null;
   }

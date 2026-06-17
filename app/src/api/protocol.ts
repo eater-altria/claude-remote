@@ -116,7 +116,10 @@ export type WireEvent =
   // A file Claude is delivering to the user's device. The bytes are fetched
   // on demand via GET /api/sessions/:id/files/:fileId (the server path is never
   // sent to the client — only this opaque fileId + display metadata).
-  | { kind: 'file'; id: string; fileId: string; name: string; size: number; mime: string; description?: string; ts: number };
+  | { kind: 'file'; id: string; fileId: string; name: string; size: number; mime: string; description?: string; ts: number }
+  // An image Claude wants shown inline in the chat (rendered, not downloaded).
+  // Bytes come from the same GET /api/sessions/:id/files/:fileId endpoint.
+  | { kind: 'image'; id: string; fileId: string; name: string; size: number; mime: string; caption?: string; ts: number };
 
 // ---------------------------------------------------------------------------
 // Permission requests (PreToolUse gate)

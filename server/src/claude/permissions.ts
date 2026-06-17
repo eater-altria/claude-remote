@@ -5,6 +5,8 @@ export const ASK_TOOL_NAME = 'mcp__ask__ask_user';
 /** The in-process MCP tool that delivers a file to the app. Always pre-approved —
  * the user's real consent is tapping Download on the card. */
 export const SEND_FILE_TOOL_NAME = 'mcp__files__send_file';
+/** The in-process MCP tool that shows an image inline in the app. Always pre-approved. */
+export const SEND_IMAGE_TOOL_NAME = 'mcp__files__send_image';
 
 const READ_ONLY = new Set([
   'Read',
@@ -35,7 +37,12 @@ export function categorize(toolName: string): ToolCategory {
 
 /** Tools that never need explicit approval, regardless of mode. */
 export function isAlwaysAllowed(toolName: string): boolean {
-  return toolName === ASK_TOOL_NAME || toolName === SEND_FILE_TOOL_NAME || READ_ONLY.has(toolName);
+  return (
+    toolName === ASK_TOOL_NAME ||
+    toolName === SEND_FILE_TOOL_NAME ||
+    toolName === SEND_IMAGE_TOOL_NAME ||
+    READ_ONLY.has(toolName)
+  );
 }
 
 /**

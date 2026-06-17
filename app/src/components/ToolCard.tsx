@@ -1,8 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { categoryColor, categoryIcon, font, radius, space, type Palette } from '../theme/theme';
 import { useTheme } from '../theme/ThemeProvider';
+import { BottomSheet } from './BottomSheet';
 import { Diff } from './Diff';
 import type { TranscriptItem } from '../state/transcript';
 
@@ -11,48 +12,74 @@ type ToolItem = Extract<TranscriptItem, { type: 'tool' }>;
 export function ToolCard({ item }: { item: ToolItem }) {
   const { colors } = useTheme();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
-  const [expanded, setExpanded] = React.useState(item.category === 'edit');
+  const [open, setOpen] = React.useState(false);
   const color = categoryColor(item.category, colors);
   const detail = useDetail(item);
   const hasBody = !!item.fileChange || !!item.result || !!detail.long;
 
+  // The card stays a fixed-height header in the list; tapping opens a bottom
+  // sheet with the details. Nothing in the list resizes, so the transcript
+  // never reflows or jumps when inspecting a tool call.
   return (
     <View style={[styles.card, { borderColor: colors.border }]}>
-      <Pressable style={styles.header} onPress={() => hasBody && setExpanded((e) => !e)}>
+      <Pressable style={styles.header} onPress={() => hasBody && setOpen(true)}>
         <View style={[styles.iconWrap, { backgroundColor: color + '22' }]}>
           <Ionicons name={categoryIcon(item.category) as any} size={15} color={color} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>{item.title}</Text>
           {detail.short ? (
-            <Text style={styles.detail} numberOfLines={expanded ? 4 : 1}>
+            <Text style={styles.detail} numberOfLines={1}>
               {detail.short}
             </Text>
           ) : null}
         </View>
         <StatusDot status={item.status} />
-        {hasBody && <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textFaint} />}
+        {hasBody && <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />}
       </Pressable>
 
-      {expanded && (
-        <View style={styles.body}>
-          {item.fileChange && <Diff fileChange={item.fileChange} />}
-          {!item.fileChange && detail.long ? (
-            <View style={styles.codeBox}>
-              <Text style={styles.code} selectable>
-                {detail.long}
-              </Text>
+      {hasBody && (
+        <BottomSheet visible={open} onClose={() => setOpen(false)}>
+          <View style={styles.sheetTitleRow}>
+            <View style={[styles.iconWrap, { backgroundColor: color + '22' }]}>
+              <Ionicons name={categoryIcon(item.category) as any} size={15} color={color} />
             </View>
-          ) : null}
-          {item.result ? (
-            <View style={[styles.resultBox, item.status === 'error' && styles.resultError]}>
-              <Text style={styles.resultLabel}>{item.status === 'error' ? 'Error' : 'Output'}</Text>
-              <Text style={styles.resultText} selectable numberOfLines={40}>
-                {item.result.trim() || '(empty)'}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sheetTitle} numberOfLines={1}>
+                {item.title}
               </Text>
+              {detail.short ? (
+                <Text style={styles.sheetSub} numberOfLines={1}>
+                  {detail.short}
+                </Text>
+              ) : null}
             </View>
-          ) : null}
-        </View>
+            <StatusDot status={item.status} />
+          </View>
+
+          <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ paddingBottom: space.md }} showsVerticalScrollIndicator={false}>
+            {item.fileChange && <Diff fileChange={item.fileChange} />}
+            {!item.fileChange && detail.long ? (
+              <View style={styles.codeBox}>
+                <Text style={styles.code} selectable>
+                  {detail.long}
+                </Text>
+              </View>
+            ) : null}
+            {item.result ? (
+              <View style={[styles.resultBox, item.status === 'error' && styles.resultError]}>
+                <Text style={styles.resultLabel}>{item.status === 'error' ? 'Error' : 'Output'}</Text>
+                <Text style={styles.resultText} selectable>
+                  {item.result.trim() || '(empty)'}
+                </Text>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          <Pressable style={styles.close} onPress={() => setOpen(false)}>
+            <Text style={styles.closeText}>Close</Text>
+          </Pressable>
+        </BottomSheet>
       )}
     </View>
   );
@@ -93,11 +120,18 @@ const makeStyles = (c: Palette) =>
     iconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     title: { color: c.text, fontSize: font.size.sm, fontWeight: '600' },
     detail: { color: c.textDim, fontSize: font.size.xs, fontFamily: font.mono, marginTop: 2 },
-    body: { paddingHorizontal: space.md, paddingBottom: space.md },
+
+    sheetTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.md },
+    sheetTitle: { color: c.text, fontSize: font.size.md, fontWeight: '700' },
+    sheetSub: { color: c.textDim, fontSize: font.size.xs, fontFamily: font.mono, marginTop: 2 },
+
     codeBox: { backgroundColor: c.codeBg, borderRadius: radius.sm, padding: space.sm, marginTop: space.xs },
     code: { color: c.codeText, fontFamily: font.mono, fontSize: font.size.xs, lineHeight: 18 },
     resultBox: { backgroundColor: c.codeBg, borderRadius: radius.sm, padding: space.sm, marginTop: space.sm, borderLeftWidth: 3, borderLeftColor: c.border },
     resultError: { borderLeftColor: c.danger },
     resultLabel: { color: c.textFaint, fontSize: font.size.xs, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
     resultText: { color: c.codeText, fontFamily: font.mono, fontSize: font.size.xs, lineHeight: 18 },
+
+    close: { padding: space.md, alignItems: 'center', marginTop: space.sm },
+    closeText: { color: c.textDim, fontSize: font.size.md, fontWeight: '600' },
   });

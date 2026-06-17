@@ -19,7 +19,8 @@ export type TranscriptItem =
   | { type: 'result'; id: string; subtype: string; isError: boolean; costUsd?: number; ts: number }
   | { type: 'task'; id: string; status: string; description: string; ts: number }
   | { type: 'notice'; id: string; level: 'info' | 'warn' | 'error'; text: string; ts: number }
-  | { type: 'file'; id: string; fileId: string; name: string; size: number; mime: string; description?: string; ts: number };
+  | { type: 'file'; id: string; fileId: string; name: string; size: number; mime: string; description?: string; ts: number }
+  | { type: 'image'; id: string; fileId: string; name: string; size: number; mime: string; caption?: string; ts: number };
 
 /** Apply a single wire event to the item list, returning a new array. */
 export function applyEvent(items: TranscriptItem[], ev: WireEvent): TranscriptItem[] {
@@ -94,6 +95,13 @@ export function applyEvent(items: TranscriptItem[], ev: WireEvent): TranscriptIt
       return [
         ...items,
         { type: 'file', id: ev.id, fileId: ev.fileId, name: ev.name, size: ev.size, mime: ev.mime, description: ev.description, ts: ev.ts },
+      ];
+
+    case 'image':
+      if (items.some((i) => i.id === ev.id)) return items;
+      return [
+        ...items,
+        { type: 'image', id: ev.id, fileId: ev.fileId, name: ev.name, size: ev.size, mime: ev.mime, caption: ev.caption, ts: ev.ts },
       ];
 
     default:

@@ -9,11 +9,18 @@ import { z } from 'zod';
 export type SendFileFn = (path: string, description?: string) => { name: string; size: number };
 
 /**
- * Builds the in-process MCP server exposing `send_file`. The model calls this to
- * deliver a file from the working directory to the user's phone; the app shows a
- * download card and fetches the bytes over the authenticated REST endpoint.
+ * Callback the session supplies: stage an image at `path` and push an inline
+ * image to the app. Returns the display name + size, or throws if the path is
+ * unreadable or not an image file.
  */
-export function buildFilesServer(sendFile: SendFileFn) {
+export type SendImageFn = (path: string, caption?: string) => { name: string; size: number };
+
+/**
+ * Builds the in-process MCP server exposing `send_file` (deliver a downloadable
+ * file) and `send_image` (show an image inline in the chat). Both stage bytes
+ * the app fetches over the authenticated REST endpoint.
+ */
+export function buildFilesServer(sendFile: SendFileFn, sendImage: SendImageFn) {
   return createSdkMcpServer({
     name: 'files',
     version: '1.0.0',
@@ -21,8 +28,9 @@ export function buildFilesServer(sendFile: SendFileFn) {
       tool(
         'send_file',
         "Deliver a file to the user's device. Use this whenever the user asks you to send, share, " +
-          'or give them a file (a document, image, log, archive, build artifact, etc.). The user sees a ' +
-          'download card in their app and saves the file to their phone. Provide the path to an existing file.',
+          'or give them a file (a document, log, archive, build artifact, etc.). The user sees a ' +
+          'download card and saves the file to their phone. Provide the path to an existing file. ' +
+          'For an image you want the user to SEE in the chat, use send_image instead.',
         {
           path: z.string().describe('Absolute path (or path relative to the working directory) of the file to send.'),
           description: z
@@ -44,6 +52,28 @@ export function buildFilesServer(sendFile: SendFileFn) {
           } catch (e) {
             return {
               content: [{ type: 'text', text: `Could not send the file: ${(e as Error).message}` }],
+            };
+          }
+        },
+      ),
+      tool(
+        'send_image',
+        'Show an image inline in the chat so the user sees it directly in the conversation (NOT as a ' +
+          'file to download). Use this for screenshots, charts, diagrams, photos, or generated images you ' +
+          'want the user to look at. Provide the path to an image file (png, jpg, jpeg, gif, webp, etc.).',
+        {
+          path: z.string().describe('Absolute path (or path relative to the working directory) of the image to show.'),
+          caption: z.string().optional().describe('Optional caption shown beneath the image.'),
+        },
+        async (args) => {
+          try {
+            const { name, size } = sendImage(args.path, args.caption);
+            return {
+              content: [{ type: 'text', text: `Displayed "${name}" (${size} bytes) inline in the user's chat.` }],
+            };
+          } catch (e) {
+            return {
+              content: [{ type: 'text', text: `Could not display the image: ${(e as Error).message}` }],
             };
           }
         },

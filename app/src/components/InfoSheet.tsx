@@ -1,9 +1,10 @@
 import React from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../state/store';
 import { font, radius, space, type Palette } from '../theme/theme';
 import { useTheme } from '../theme/ThemeProvider';
+import { BottomSheet } from './BottomSheet';
 import type { ContextUsageDTO, UsageDTO } from '../api/protocol';
 
 export type InfoKind = 'context' | 'usage';
@@ -71,42 +72,37 @@ export function InfoSheet({
   }, [visible, load]);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <View style={styles.handle} />
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>{kind === 'context' ? 'Context usage' : 'Usage & limits'}</Text>
-            <Pressable onPress={load} hitSlop={10} disabled={loading}>
-              <Ionicons name="refresh" size={18} color={colors.textDim} />
-            </Pressable>
-          </View>
-
-          {loading ? (
-            <View style={styles.centerBox}>
-              <ActivityIndicator color={colors.accent} />
-            </View>
-          ) : error ? (
-            <View style={styles.centerBox}>
-              <Ionicons name="alert-circle" size={22} color={colors.danger} />
-              <Text style={styles.errorText}>{error}</Text>
-              <Pressable style={styles.retry} onPress={load}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingBottom: space.md }}>
-              {kind === 'context' && context ? <ContextBody data={context} /> : null}
-              {kind === 'usage' && usage ? <UsageBody data={usage} /> : null}
-            </ScrollView>
-          )}
-
-          <Pressable style={styles.cancel} onPress={onClose}>
-            <Text style={styles.cancelText}>Close</Text>
-          </Pressable>
+    <BottomSheet visible={visible} onClose={onClose}>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>{kind === 'context' ? 'Context usage' : 'Usage & limits'}</Text>
+        <Pressable onPress={load} hitSlop={10} disabled={loading}>
+          <Ionicons name="refresh" size={18} color={colors.textDim} />
         </Pressable>
+      </View>
+
+      {loading ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator color={colors.accent} />
+        </View>
+      ) : error ? (
+        <View style={styles.centerBox}>
+          <Ionicons name="alert-circle" size={22} color={colors.danger} />
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable style={styles.retry} onPress={load}>
+            <Text style={styles.retryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingBottom: space.md }}>
+          {kind === 'context' && context ? <ContextBody data={context} /> : null}
+          {kind === 'usage' && usage ? <UsageBody data={usage} /> : null}
+        </ScrollView>
+      )}
+
+      <Pressable style={styles.cancel} onPress={onClose}>
+        <Text style={styles.cancelText}>Close</Text>
       </Pressable>
-    </Modal>
+    </BottomSheet>
   );
 }
 
@@ -219,9 +215,6 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 const makeStyles = (c: Palette) =>
   StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: { backgroundColor: c.bgElevated, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: space.lg, paddingBottom: space.xxl, borderTopWidth: 1, borderColor: c.borderStrong },
-    handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: c.border, marginBottom: space.md },
     titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.md },
     title: { color: c.text, fontSize: font.size.lg, fontWeight: '700' },
     centerBox: { alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxl, gap: space.sm },

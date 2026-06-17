@@ -58,6 +58,7 @@ const EFFORT_THINKING_TOKENS: Record<EffortLevel, number> = {
 };
 const ASK_TOOL_NAME = 'mcp__ask__ask_user';
 const SEND_FILE_TOOL_NAME = 'mcp__files__send_file';
+const SEND_IMAGE_TOOL_NAME = 'mcp__files__send_image';
 const MAX_BACKLOG = 4000;
 
 /** A file staged for download by `send_file`, keyed by an opaque fileId. */
@@ -194,7 +195,10 @@ export class ClaudeSession extends EventEmitter {
   // -------------------------------------------------------------------------
   start(): void {
     const askServer = buildAskServer((questions) => this.askUser(questions));
-    const filesServer = buildFilesServer((p, description) => this.sendFile(p, description));
+    const filesServer = buildFilesServer(
+      (p, description) => this.sendFile(p, description),
+      (p, caption) => this.sendImage(p, caption),
+    );
 
     const planPrompt =
       this.mode === 'plan'
@@ -212,7 +216,7 @@ export class ClaudeSession extends EventEmitter {
       model: this.model ?? undefined,
       title: this.title,
       mcpServers: { ask: askServer, files: filesServer },
-      allowedTools: [ASK_TOOL_NAME, SEND_FILE_TOOL_NAME],
+      allowedTools: [ASK_TOOL_NAME, SEND_FILE_TOOL_NAME, SEND_IMAGE_TOOL_NAME],
       disallowedTools: ['AskUserQuestion'],
       systemPrompt: {
         type: 'preset',
@@ -221,7 +225,9 @@ export class ClaudeSession extends EventEmitter {
           'When you need the user to make a choice or clarify something, call the mcp__ask__ask_user tool ' +
           '(never the AskUserQuestion tool) to present interactive option cards. ' +
           "When the user asks you to send, share, or give them a file, call the mcp__files__send_file tool " +
-          "with the file's path so they get a download card on their phone." +
+          "with the file's path so they get a download card on their phone. " +
+          'To show the user an image inline in the chat (a screenshot, chart, diagram, or generated image), ' +
+          'call the mcp__files__send_image tool with the image path instead of send_file.' +
           planPrompt,
       },
       abortController: this.abort,
@@ -745,8 +751,8 @@ export class ClaudeSession extends EventEmitter {
   // -------------------------------------------------------------------------
   // File delivery (send_file MCP tool)
   // -------------------------------------------------------------------------
-  /** Stage a file for download and push a file card to the app. */
-  sendFile(filePath: string, description?: string): { name: string; size: number } {
+  /** Validate a path and return its metadata — no side effects (no staging). */
+  private resolveFile(filePath: string): StagedFile {
     const abs = path.isAbsolute(filePath) ? filePath : path.resolve(this.cwd, filePath);
     let stat: fs.Stats;
     try {
@@ -756,14 +762,31 @@ export class ClaudeSession extends EventEmitter {
     }
     if (!stat.isFile()) throw new Error(`Not a regular file: ${abs}`);
     fs.accessSync(abs, fs.constants.R_OK); // throws if unreadable
+    return { path: abs, name: path.basename(abs), size: stat.size, mime: guessMime(path.basename(abs)) };
+  }
 
-    const name = path.basename(abs);
-    const size = stat.size;
-    const mime = guessMime(name);
+  /** Register a resolved file so the REST endpoint can serve it; returns its fileId. */
+  private registerFile(entry: StagedFile): string {
     const fileId = this.nid('file');
-    this.stagedFiles.set(fileId, { path: abs, name, size, mime });
-    this.pushEvent({ kind: 'file', id: this.nid('ev'), fileId, name, size, mime, description, ts: Date.now() });
-    return { name, size };
+    this.stagedFiles.set(fileId, entry);
+    return fileId;
+  }
+
+  /** Stage a file for download and push a file card to the app. */
+  sendFile(filePath: string, description?: string): { name: string; size: number } {
+    const e = this.resolveFile(filePath);
+    const fileId = this.registerFile(e);
+    this.pushEvent({ kind: 'file', id: this.nid('ev'), fileId, name: e.name, size: e.size, mime: e.mime, description, ts: Date.now() });
+    return { name: e.name, size: e.size };
+  }
+
+  /** Stage an image and push it for inline display in the chat. */
+  sendImage(filePath: string, caption?: string): { name: string; size: number } {
+    const e = this.resolveFile(filePath);
+    if (!e.mime.startsWith('image/')) throw new Error(`Not an image file (detected ${e.mime}): ${e.name}`);
+    const fileId = this.registerFile(e);
+    this.pushEvent({ kind: 'image', id: this.nid('ev'), fileId, name: e.name, size: e.size, mime: e.mime, caption, ts: Date.now() });
+    return { name: e.name, size: e.size };
   }
 
   /** Look up a staged file for the REST download endpoint. */

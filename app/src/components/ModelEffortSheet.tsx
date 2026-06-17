@@ -1,8 +1,9 @@
 import React from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { font, radius, space, type Palette } from '../theme/theme';
 import { useTheme } from '../theme/ThemeProvider';
+import { BottomSheet } from './BottomSheet';
 import type { EffortLevel, ModelOptionDTO } from '../api/protocol';
 
 // ---------------------------------------------------------------------------
@@ -20,12 +21,22 @@ export function modelLabel(model: string | null | undefined, models: ModelOption
   return model.length > 14 ? model.slice(0, 14) + '…' : model;
 }
 
-function isCurrentModel(model: string | null | undefined, value: string): boolean {
-  if (!model) return false;
-  if (model === value) return true;
+/**
+ * Pick the single model value to highlight as selected. Prefer an exact id
+ * match; only fall back to loose substring matching when nothing matches
+ * exactly, so aliases (e.g. "opus") and pinned ids (e.g. "claude-opus-4-8[1m]")
+ * don't both light up at once.
+ */
+function selectedModelValue(model: string | null | undefined, models: ModelOptionDTO[]): string | null {
+  if (!model) return null;
+  const exact = models.find((m) => m.value === model);
+  if (exact) return exact.value;
   const a = model.toLowerCase();
-  const b = value.toLowerCase().replace(/\[.*$/, '');
-  return b.length > 2 && a.includes(b);
+  const loose = models.find((m) => {
+    const b = m.value.toLowerCase().replace(/\[.*$/, '');
+    return b.length > 2 && a.includes(b);
+  });
+  return loose?.value ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,17 +81,16 @@ export function ModelEffortSheet({
   const { colors } = useTheme();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <View style={styles.handle} />
-          <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ paddingBottom: space.sm }} showsVerticalScrollIndicator={false}>
+    <BottomSheet visible={visible} onClose={onClose}>
+      <ScrollView style={{ maxHeight: 480 }} contentContainerStyle={{ paddingBottom: space.sm }} showsVerticalScrollIndicator={false}>
             <Text style={styles.section}>Model</Text>
             {models.length === 0 ? (
               <Text style={styles.empty}>No models reported by the server yet.</Text>
             ) : (
-              models.map((m) => {
-                const sel = isCurrentModel(currentModel, m.value);
+              (() => {
+                const selectedValue = selectedModelValue(currentModel, models);
+                return models.map((m) => {
+                const sel = m.value === selectedValue;
                 return (
                   <Pressable key={m.value} style={[styles.row, sel && styles.rowSel]} onPress={() => onSelectModel(m.value)}>
                     <View style={{ flex: 1 }}>
@@ -94,7 +104,8 @@ export function ModelEffortSheet({
                     {sel ? <Ionicons name="checkmark-circle" size={20} color={colors.accent} /> : null}
                   </Pressable>
                 );
-              })
+              });
+              })()
             )}
 
             <Text style={[styles.section, { marginTop: space.lg }]}>Thinking effort</Text>
@@ -114,20 +125,15 @@ export function ModelEffortSheet({
             })}
           </ScrollView>
 
-          <Pressable style={styles.done} onPress={onClose}>
-            <Text style={styles.doneText}>Done</Text>
-          </Pressable>
-        </Pressable>
+      <Pressable style={styles.done} onPress={onClose}>
+        <Text style={styles.doneText}>Done</Text>
       </Pressable>
-    </Modal>
+    </BottomSheet>
   );
 }
 
 const makeStyles = (c: Palette) =>
   StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: { backgroundColor: c.bgElevated, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: space.lg, paddingBottom: space.xxl, borderTopWidth: 1, borderColor: c.borderStrong },
-    handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: c.border, marginBottom: space.md },
     section: { color: c.textDim, fontSize: font.size.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: space.sm },
     empty: { color: c.textDim, fontSize: font.size.sm, paddingVertical: space.md },
     row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: c.border, marginBottom: space.sm, backgroundColor: c.card },
