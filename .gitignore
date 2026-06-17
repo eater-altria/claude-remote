@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.expo/
+web-build/
+
+# Build artifacts (APKs/AABs are large and rebuildable)
+*.apk
+*.aab
+*.ipa
+
+# Local signing credentials & secrets — NEVER commit
+credentials/
+credentials.json
+google-services.json
+*.keystore
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
