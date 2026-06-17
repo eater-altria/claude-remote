@@ -15,6 +15,20 @@
 └──────────────┘   sessions · stream · approve   └────────────────────────────┘
 ```
 
+## 截图
+
+<p align="center">
+  <img src="docs/screenshots/sessions.jpg" width="246" alt="按项目分的会话列表（含成本与状态）">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/chat.jpg" width="246" alt="实时对话：diff、思考过程、工具调用、逐条审批">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/servers.jpg" width="246" alt="多服务器档案与明暗主题">
+</p>
+
+<p align="center">
+  <sub>按项目分的会话（成本 / 状态）· 实时对话含 diff·思考·工具调用·逐条审批 · 多服务器 + 明暗主题</sub>
+</p>
+
 ## 功能简介
 
 - 💬 通过局域网与 Claude Code 聊天 —— 多轮对话，流式输出。
