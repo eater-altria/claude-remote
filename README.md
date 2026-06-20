@@ -59,6 +59,7 @@
 claude-remote/
 ├── server/      Node + TypeScript 服务（Claude Agent SDK 封装）
 ├── app/         Expo / React Native App（expo-router, TypeScript）
+├── relay/       可选云中继（跨网段时用；本机 server 拨出，中继反代 App 流量）
 ├── install/     自启安装器（launchd / systemd）
 ├── PROJECT_OVERVIEW.md   完整架构与设计说明
 └── README.md
@@ -140,6 +141,50 @@ npx expo run:android        # 需要 Android SDK + 设备/模拟器
 
 > 手机与电脑必须在同一网络，且服务端口（8787）必须可达
 > （需在防火墙放行）。
+
+---
+
+## 3. 云中继 Relay（可选 —— 手机和电脑不在同一局域网时）
+
+默认是局域网直连。当手机和电脑跨网段（例如人在外面用 4G）时，部署一个 **relay**：
+本机 server 主动**拨出**连到 relay，relay 把 App 的 HTTP + WebSocket 流量反代回来。
+一个 relay 可按 `serverId` 同时转发**多台**本机 server。
+
+```
+App ──HTTPS/WSS──▶ relay（公网）◀──WSS 拨出── 本机 server（NAT 后）
+        /s/<serverId>/...                      127.0.0.1:8787
+```
+
+**① 在一台公网机器上跑 relay：**
+
+```bash
+cd relay
+npm install
+cp .env.example .env          # 编辑里面的 RELAY_TOKEN（自己设个强密码）
+npm run build && npm start    # 监听 8080；建议前面挂 Caddy/nginx 上 HTTPS
+```
+
+**② 让本机 server 拨出去**（`server/.env` 或环境变量）：
+
+```bash
+CLAUDE_REMOTE_RELAY_ENABLED=1
+CLAUDE_REMOTE_RELAY_URL=https://relay.example.com   # ws/wss 自动推导
+CLAUDE_REMOTE_RELAY_TOKEN=<和 relay 的 RELAY_TOKEN 一致>
+CLAUDE_REMOTE_RELAY_SERVER_ID=home-mac              # 不填会自动生成并持久化
+```
+
+启动后 server 日志会打印中继地址，例如 `https://relay.example.com/s/home-mac (via cloud relay)`。
+
+**③ App 里新增一台 server：**
+
+| 字段 | 填什么 |
+|---|---|
+| **URL** | `https://relay.example.com/s/<serverId>` —— ⚠️ **必须带 `/s/<serverId>` 后缀**（就是 server 日志里那个地址），漏了会报 *JSON parse error* / *No route* |
+| **Token** | 本机 **server 自己的 access token**（不是 relay 的 `RELAY_TOKEN`） |
+
+> relay 不存 server 的明文 token，只存其 sha256 并逐请求校验；它看不懂业务内容，
+> 只按 `streamId` 多路复用转发，所以鉴权 / WS / REST / 文件下载逻辑 100% 复用。
+> 局域网直连与中继并存、互不影响。更详细的部署见 [`relay/README.md`](./relay/README.md)。
 
 ---
 

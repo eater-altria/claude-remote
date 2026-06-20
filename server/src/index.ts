@@ -1,9 +1,11 @@
+import 'dotenv/config'; // load server/.env (if present) before anything reads process.env
 import http from 'node:http';
 import os from 'node:os';
 import { loadConfig } from './config.js';
 import { SessionManager } from './claude/manager.js';
 import { buildApp } from './http/rest.js';
 import { attachGateway } from './ws/gateway.js';
+import { startRelayAgent } from './relay/agent.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('main');
@@ -36,8 +38,15 @@ function main() {
     log.info('  Connect the app to one of:');
     for (const ip of ips) log.info(`    http://${ip}:${cfg.port}`);
     log.info(`    http://127.0.0.1:${cfg.port}`);
+    if (cfg.relay?.enabled && cfg.relay.url && cfg.relay.serverId) {
+      log.info(`    ${cfg.relay.url}/s/${cfg.relay.serverId}  (via cloud relay)`);
+    }
     log.info(`  Access token:  ${cfg.token}`);
     log.info('───────────────────────────────────────────────');
+
+    // Dial out to the cloud relay once the loopback listener is up (the agent
+    // replays relayed traffic onto 127.0.0.1). No-op unless relay.enabled.
+    startRelayAgent(cfg);
   });
 
   const shutdown = (sig: string) => {

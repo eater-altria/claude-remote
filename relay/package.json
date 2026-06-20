@@ -1,8 +1,8 @@
 {
-  "name": "claude-remote-server",
+  "name": "claude-remote-relay",
   "version": "1.0.0",
   "private": true,
-  "description": "Server that drives Claude Code (Claude Agent SDK) and exposes it to the Claude Remote mobile app over HTTP + WebSocket.",
+  "description": "Cloud relay that tunnels the Claude Remote app to a local server behind NAT — the local server dials out, the relay reverse-proxies HTTP + WebSocket to it, keyed by serverId so one relay serves many servers.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -12,16 +12,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.178",
-    "cors": "^2.8.5",
     "dotenv": "^17.4.2",
-    "express": "^4.21.2",
-    "ws": "^8.18.0",
-    "zod": "^4.4.3"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",

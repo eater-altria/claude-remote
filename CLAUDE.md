@@ -11,6 +11,7 @@
 ```
 server/   Node + TypeScript 服务（Claude Agent SDK 封装）— ESM
 app/      Expo ~56 / RN 0.85 / React 19 App（expo-router）— Android 为主
+relay/    可选云中继：本机 server 拨出 → 中继反代 app 流量（跨网段时用）— ESM
 install/  自启安装器（macOS launchd / Linux systemd）
 ```
 
@@ -36,6 +37,11 @@ install/  自启安装器（macOS launchd / Linux systemd）
 - `claude/` — `manager.ts`（会话注册表/持久化/LRU）· `session.ts`（单个常驻 `query()` 生命周期，最核心）· `permissions.ts`（权限策略 + diff 派生）· `transform.ts`（SDK 流 → WireEvent）· `askTool.ts` / `filesTool.ts`（内置 MCP）
 - `http/` — `rest.ts`（health/fs/capabilities/sessions/file 下载/**git**/**REST 权限·问题应答**）· `fsbrowse.ts` · `git.ts`（`git status/diff` 解析为 `GitStatusDTO`）
 - `ws/gateway.ts` — WS 网关（鉴权握手、多路复用、广播、心跳）。permission/question/state 事件**额外** `broadcastAll` 一条 `alert` 给所有连接客户端 → App 转成本端本地通知（取代旧的 FCM 推送）
+- `relay/agent.ts` — 可选拨出桥：opt-in 时向云中继开一条常驻控制 WS，把中继转发来的 HTTP/WS 重放到本机 loopback（`127.0.0.1:<port>`），**完全复用**现有 gateway/REST。`index.ts` 在 `server.listen` 回调里调 `startRelayAgent(cfg)`（未配置则 no-op）
+
+**Relay（`relay/src/`，独立可部署服务）**
+- `index.ts` 启动（`RELAY_PORT`/`RELAY_HOST`/`RELAY_TOKEN`）· `relay.ts`（按 `serverId` 多路复用：`/agent` 控制通道 + `/s/:serverId/*` 反代）· `protocol.ts` — ★ 中继↔agent 线协议**真源**（与 `server/src/relay/agent.ts` 顶部的镜像手工同步）
+- App 不需改：把某个 server 的 `baseUrl` 填成 `https://relay/s/<serverId>`，`wsUrl()`/REST 自然拼出 `…/s/<id>/ws` 与 `…/s/<id>/api/*`，token 用 server **自己的** access token（中继只存其 sha256，逐请求校验）。LAN 与中继并存互不影响。详见 `relay/README.md`
 
 **App（`app/src/`）**
 - `app/` expo-router 屏幕：`index`（会话列表）· `new-session`（浏览 fs 选 cwd）· `settings`（多服务器）· `session/[id].tsx`（聊天主界面，最核心）
@@ -71,6 +77,22 @@ install/  自启安装器（macOS launchd / Linux systemd）
 `_TOKEN` · `_CLAUDE_PATH`(自动探测) · `_DATA_DIR`(~/.claude-remote) · `_MAX_LIVE`(12)。
 默认加载用户真实 Claude 设置（`settingSources: ['user','project','local']`），所以 skills /
 plugins / 自定义 slash 命令都可用。
+
+server 与 relay 启动时各自 `import 'dotenv/config'`，自动读取**各自工作目录**下的 `.env`
+（`server/.env`、`relay/.env`，见各目录 `.env.example`）。真实 shell 环境变量优先级高于
+`.env`；`.env` 已被 `.gitignore` 忽略，勿提交。
+
+- **config.json 不回写 env 解析结果**：`loadConfig` 只在「自动生成了新 token」时写一次
+  config.json（仅持久化 token，供 `install.sh` 读取）。其余字段（port/host/relay…）每次
+  按 env > config.json > 默认值即时解析，**不焯进文件**——删掉某个 env 变量（如 relay）下次
+  启动即生效，不会被旧的持久化值续上。要用 config.json 配置，手写进去即可（会被读取、不被覆盖）。
+- **dotenv 不做 `~`/变量展开**：`CLAUDE_REMOTE_DATA_DIR` 的前导 `~` 由 `expandHome` 展开
+  （否则会在 cwd 下建出字面 `~` 目录）。relay `serverId` 缺省由**主机名**派生（稳定、无需持久化）。
+
+**云中继（可选，默认关）**：env `CLAUDE_REMOTE_RELAY_ENABLED`(1/true) · `_RELAY_URL`(中继 https
+地址) · `_RELAY_TOKEN`(= 中继 `RELAY_TOKEN`) · `_RELAY_SERVER_ID`(缺省自动生成并持久化) ·
+`_RELAY_NAME`，或 config.json 的 `relay` 块。`loadRelayConfig`（`config.ts`）解析：env 优先、
+未配置则 `relay: null`（保持纯 LAN）。中继侧部署见 `relay/README.md`。
 
 ## Expo 注意
 
