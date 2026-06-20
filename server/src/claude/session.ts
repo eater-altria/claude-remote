@@ -93,7 +93,8 @@ export interface SessionOptions {
   title: string;
   model: string | null;
   permissionMode: PermissionMode;
-  claudePath: string;
+  /** Path to the `claude` executable, or null to use the SDK-bundled binary. */
+  claudePath: string | null;
   settingSources: SettingSource[];
   /** When resuming a persisted session, the SDK session id to resume. */
   resumeSessionId?: string;
@@ -207,7 +208,9 @@ export class ClaudeSession extends EventEmitter {
 
     const options: Options = {
       cwd: this.cwd,
-      pathToClaudeCodeExecutable: this.opts.claudePath,
+      // Omit when null so the SDK resolves its own bundled native binary; passing
+      // a wrapper script (e.g. the Windows npm shim) would fail to launch.
+      ...(this.opts.claudePath ? { pathToClaudeCodeExecutable: this.opts.claudePath } : {}),
       settingSources: this.opts.settingSources,
       // We always keep the SDK in 'default' and enforce our own policy in the
       // PreToolUse hook (the canUseTool path is broken in this SDK version).

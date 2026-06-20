@@ -33,7 +33,7 @@ function main() {
     log.info('───────────────────────────────────────────────');
     log.info('  Claude Remote server is running');
     log.info(`  Listening on ${cfg.host}:${cfg.port}`);
-    log.info(`  claude binary: ${cfg.claudePath}`);
+    log.info(`  claude binary: ${cfg.claudePath ?? 'SDK bundled'}`);
     log.info(`  data dir:      ${cfg.dataDir}`);
     log.info('  Connect the app to one of:');
     for (const ip of ips) log.info(`    http://${ip}:${cfg.port}`);

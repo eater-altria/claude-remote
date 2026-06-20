@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import type { SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from './logger.js';
 
@@ -14,8 +13,9 @@ export interface AppConfig {
   port: number;
   /** Bearer token required on every HTTP request and the WS handshake. */
   token: string;
-  /** Absolute path to the `claude` executable. */
-  claudePath: string;
+  /** Absolute path to the `claude` executable, or null to let the SDK resolve
+   *  its own version-matched bundled native binary. */
+  claudePath: string | null;
   /** Directory where session metadata + config live. */
   dataDir: string;
   /** SDK setting sources to load. [] = hermetic (default). */
@@ -84,16 +84,28 @@ function loadRelayConfig(persisted: Partial<RelayConfig> | null | undefined): Re
   return { enabled, url, token, serverId, name };
 }
 
-function findClaude(): string {
-  // 1. Explicit override.
+/** Locate a *directly launchable* `claude` executable, or return null to let the
+ *  SDK resolve its own version-matched bundled native binary. The SDK spawns
+ *  `pathToClaudeCodeExecutable` directly as a native binary (unless it ends in
+ *  .js/.mjs), so we must never hand it a wrapper script. In particular the npm
+ *  global shim on Windows (`…\npm\claude`, no extension, plus `.cmd`/`.ps1`) is
+ *  NOT a native binary — pointing the SDK at it fails with "native binary …
+ *  exists but failed to launch". When we find nothing launchable we return null;
+ *  the SDK then loads its bundled binary from the `@anthropic-ai/claude-agent-sdk-
+ *  <platform>` optional dependency, which a normal `npm install` already pulls in. */
+function findClaude(): string | null {
+  // 1. Explicit override always wins (assumed launchable by the operator).
   if (process.env.CLAUDE_REMOTE_CLAUDE_PATH) return process.env.CLAUDE_REMOTE_CLAUDE_PATH;
-  // 2. Common install locations.
-  const candidates = [
-    path.join(os.homedir(), '.local/bin/claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-    path.join(os.homedir(), '.claude/local/claude'),
-  ];
+  // 2. Native-installer locations — real launchable binaries.
+  const candidates =
+    process.platform === 'win32'
+      ? [path.join(os.homedir(), '.local', 'bin', 'claude.exe')]
+      : [
+          path.join(os.homedir(), '.local/bin/claude'),
+          '/usr/local/bin/claude',
+          '/opt/homebrew/bin/claude',
+          path.join(os.homedir(), '.claude/local/claude'),
+        ];
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) return c;
@@ -101,23 +113,27 @@ function findClaude(): string {
       /* ignore */
     }
   }
-  // 3. PATH lookup.
+  // 3. PATH lookup — but only accept a directly launchable result. On Windows
+  //    that means a real `.exe`; the extensionless / `.cmd` / `.ps1` npm shims
+  //    are wrapper scripts the SDK can't spawn, so we skip them and fall through
+  //    to the bundled binary instead.
   try {
     const which = process.platform === 'win32' ? 'where claude' : 'command -v claude';
-    const out = execSync(which, { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
-    if (out) return out;
+    const lines = execSync(which, { encoding: 'utf8' })
+      .trim()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const pick = process.platform === 'win32' ? lines.find((l) => /\.exe$/i.test(l)) : lines[0];
+    if (pick) return pick;
   } catch {
     /* ignore */
   }
-  // 4. Bundled with the SDK (let the SDK resolve it).
-  try {
-    const require = createRequire(import.meta.url);
-    require.resolve('@anthropic-ai/claude-agent-sdk');
-  } catch {
-    /* ignore */
-  }
-  log.warn('Could not locate the `claude` executable; falling back to "claude" on PATH.');
-  return 'claude';
+  // 4. Nothing launchable found → let the SDK resolve its own bundled native
+  //    binary (version-matched to the SDK). Requires a normal `npm install`
+  //    (without --omit=optional) so the platform optional dependency is present.
+  log.info('No external `claude` install detected; using the SDK-bundled native binary.');
+  return null;
 }
 
 function defaultRoots(): { name: string; path: string }[] {
@@ -202,7 +218,7 @@ export function loadConfig(): AppConfig {
     host: process.env.CLAUDE_REMOTE_HOST || persisted.host || '0.0.0.0',
     port: Number(process.env.CLAUDE_REMOTE_PORT || persisted.port || 8787),
     token,
-    claudePath: persisted.claudePath || findClaude(),
+    claudePath: persisted.claudePath ?? findClaude(),
     dataDir,
     // Load the user's real Claude Code settings so their skills, plugins and
     // custom slash commands are available. Override via config.json if you want
