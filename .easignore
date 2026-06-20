@@ -1,0 +1,43 @@
+# EAS Build upload ignore list. Mirrors .gitignore, but intentionally does NOT
+# ignore google-services.json — that file must ship in the Android build for
+# Firebase/FCM push, yet stays git-ignored (it's gitignored, not committed).
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.expo/
+web-build/
+
+# Build artifacts (APKs/AABs are large and rebuildable)
+*.apk
+*.aab
+*.ipa
+
+# Local signing credentials & secrets — NEVER commit
+credentials/
+credentials.json
+*.keystore
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store

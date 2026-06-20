@@ -5,15 +5,24 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useStore } from '../state/store';
+import { installNotificationHandlers, registerForNotifications } from '../state/notifications';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 
 function ThemedApp() {
   const { colors, scheme } = useTheme();
   const loadConfig = useStore((s) => s.loadConfig);
+  const notificationsEnabled = useStore((s) => s.notificationsEnabled);
 
   React.useEffect(() => {
     loadConfig();
+    installNotificationHandlers();
   }, [loadConfig]);
+
+  // Ask for notification permission + set up the channel/category once the user
+  // has notifications enabled. Local-only now — no server registration needed.
+  React.useEffect(() => {
+    if (notificationsEnabled) registerForNotifications().catch(() => {});
+  }, [notificationsEnabled]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>

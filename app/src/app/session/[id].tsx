@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
@@ -19,12 +19,21 @@ import { QuestionCards } from '../../components/QuestionCards';
 import { CommandPalette } from '../../components/CommandPalette';
 import { ModelEffortSheet, modelLabel, effortLabel } from '../../components/ModelEffortSheet';
 import { InfoSheet, type InfoKind } from '../../components/InfoSheet';
+import { GitSheet } from '../../components/GitSheet';
 import { FileMentionPalette } from '../../components/FileMentionPalette';
 import { FileCard } from '../../components/FileCard';
 import { ImageCard } from '../../components/ImageCard';
 import { PERMISSION_MODE_LABELS, type EffortLevel, type FsEntry, type PermissionMode, type SlashCommandDTO } from '../../api/protocol';
 
 const MODE_CYCLE: PermissionMode[] = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
+
+function fmtTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  return `${hh}:${mm}`;
+}
 
 const EMPTY_VIEW: SessionView = { items: [], permissions: [], questions: [] };
 
@@ -48,6 +57,9 @@ export default function ChatScreen() {
   const globalCaps = useStore((s) => s.capabilities);
 
   const [text, setText] = React.useState('');
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [planDismissed, setPlanDismissed] = React.useState(false);
+  const [gitOpen, setGitOpen] = React.useState(false);
   const [modelEffortOpen, setModelEffortOpen] = React.useState(false);
   const [infoSheet, setInfoSheet] = React.useState<{ kind: InfoKind } | null>(null);
   const [pendingImages, setPendingImages] = React.useState<{ uri: string; mime: string; data: string }[]>([]);
@@ -72,6 +84,24 @@ export default function ChatScreen() {
   const state = meta?.state ?? 'starting';
   const busy = state === 'running' || state === 'starting';
   const mode = meta?.permissionMode ?? 'default';
+
+  // Plan-review bar: in plan mode, once a turn finishes and Claude has presented
+  // a written plan, offer a one-tap "approve & build" that flips to auto-edit and
+  // tells Claude to proceed. Re-appears after each subsequent planning turn.
+  const prevBusy = React.useRef(busy);
+  React.useEffect(() => {
+    if (busy && !prevBusy.current) setPlanDismissed(false);
+    prevBusy.current = busy;
+  }, [busy]);
+  const hasPlan = React.useMemo(() => view.items.some((i) => i.type === 'text'), [view.items]);
+  const showPlanBar = mode === 'plan' && !busy && hasPlan && !planDismissed && state !== 'closed' && state !== 'error';
+
+  const approvePlan = (next: PermissionMode) => {
+    setMode(sessionId, next);
+    sendMessage(sessionId, 'The plan looks good — please proceed and implement it.');
+    setPlanDismissed(true);
+    scrollToBottom();
+  };
 
   const caps = view.capabilities ?? globalCaps ?? undefined;
   const baseCommands = caps?.commands ?? [];
@@ -214,6 +244,7 @@ export default function ChatScreen() {
     sendMessage(sessionId, t, imgs.length ? imgs.map((i) => ({ mime: i.mime, data: i.data })) : undefined);
     setText('');
     setPendingImages([]);
+    setFullscreen(false);
     scrollToBottom();
   };
 
@@ -322,19 +353,45 @@ export default function ChatScreen() {
           </ScrollView>
         ) : null}
 
+        {showPlanBar ? (
+          <View style={styles.planBar}>
+            <View style={styles.planBarHead}>
+              <Ionicons name="map-outline" size={15} color={colors.accent} />
+              <Text style={styles.planBarText}>Plan ready — approve to start building?</Text>
+              <Pressable onPress={() => setPlanDismissed(true)} hitSlop={8}>
+                <Ionicons name="close" size={16} color={colors.textFaint} />
+              </Pressable>
+            </View>
+            <View style={styles.planBarBtns}>
+              <Pressable style={[styles.planBtn, styles.planBtnPrimary]} onPress={() => approvePlan('acceptEdits')}>
+                <Ionicons name="checkmark-circle" size={16} color={colors.onAccent} />
+                <Text style={styles.planBtnPrimaryText}>Approve & build</Text>
+              </Pressable>
+              <Pressable style={styles.planBtn} onPress={() => approvePlan('default')}>
+                <Text style={styles.planBtnText}>Approve (ask each step)</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.inputBar}>
           <Pressable style={styles.attachBtn} onPress={pickImage} hitSlop={6} disabled={state === 'closed' || state === 'error'}>
             <Ionicons name="image-outline" size={24} color={colors.textDim} />
           </Pressable>
-          <TextInput
-            style={styles.input}
-            placeholder={busy ? 'Claude is working…  (/ for commands)' : 'Message Claude Code   ·   / for commands'}
-            placeholderTextColor={colors.textFaint}
-            value={text}
-            onChangeText={setText}
-            multiline
-            editable={state !== 'closed' && state !== 'error'}
-          />
+          <View style={styles.inputWrap}>
+            <TextInput
+              style={styles.input}
+              placeholder={busy ? 'Claude is working…' : 'Message Claude Code'}
+              placeholderTextColor={colors.textFaint}
+              value={text}
+              onChangeText={setText}
+              multiline
+              editable={state !== 'closed' && state !== 'error'}
+            />
+            <Pressable style={styles.expandBtn} onPress={() => setFullscreen(true)} hitSlop={6}>
+              <Ionicons name="expand-outline" size={15} color={colors.textFaint} />
+            </Pressable>
+          </View>
           {busy ? (
             <Pressable style={[styles.sendBtn, { backgroundColor: colors.danger }]} onPress={() => interrupt(sessionId)}>
               <Ionicons name="stop" size={20} color={colors.onAccent} />
@@ -362,8 +419,14 @@ export default function ChatScreen() {
             <Ionicons name="shield-half-outline" size={13} color={colors.accent} />
             <Text style={[styles.toolPillText, { color: colors.accent }]}>{PERMISSION_MODE_LABELS[mode]}</Text>
           </Pressable>
+          <Pressable style={styles.toolPill} onPress={() => setGitOpen(true)} hitSlop={6}>
+            <Ionicons name="git-branch-outline" size={13} color={colors.success} />
+            <Text style={[styles.toolPillText, { color: colors.success }]}>Git</Text>
+          </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <GitSheet visible={gitOpen} sessionId={sessionId} onClose={() => setGitOpen(false)} />
 
       <ModelEffortSheet
         visible={modelEffortOpen}
@@ -378,6 +441,49 @@ export default function ChatScreen() {
       {infoSheet ? (
         <InfoSheet visible kind={infoSheet.kind} sessionId={sessionId} onClose={() => setInfoSheet(null)} />
       ) : null}
+
+      <Modal visible={fullscreen} animationType="slide" onRequestClose={() => setFullscreen(false)}>
+        <SafeAreaView style={styles.fsContainer} edges={['top', 'bottom']}>
+          <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+            <View style={styles.fsHeader}>
+              <Pressable onPress={() => setFullscreen(false)} hitSlop={8} style={styles.fsHeaderBtn}>
+                <Ionicons name="contract-outline" size={22} color={colors.textDim} />
+              </Pressable>
+              <Text style={styles.fsTitle}>Edit message</Text>
+              {busy ? (
+                <Pressable
+                  style={[styles.fsSend, { backgroundColor: colors.danger }]}
+                  onPress={() => {
+                    interrupt(sessionId);
+                    setFullscreen(false);
+                  }}
+                >
+                  <Ionicons name="stop" size={18} color={colors.onAccent} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.fsSend, !text.trim() && pendingImages.length === 0 && { opacity: 0.4 }]}
+                  onPress={onSend}
+                  disabled={!text.trim() && pendingImages.length === 0}
+                >
+                  <Ionicons name="arrow-up" size={20} color={colors.onAccent} />
+                </Pressable>
+              )}
+            </View>
+            <TextInput
+              style={styles.fsInput}
+              placeholder="Message Claude Code"
+              placeholderTextColor={colors.textFaint}
+              value={text}
+              onChangeText={setText}
+              multiline
+              autoFocus
+              textAlignVertical="top"
+              editable={state !== 'closed' && state !== 'error'}
+            />
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -400,13 +506,14 @@ function Item({ item, sessionId }: { item: TranscriptItem; sessionId: string }) 
             ) : null}
             {item.text ? <Text style={styles.userText}>{item.text}</Text> : null}
           </View>
+          <Text style={styles.msgTime}>{fmtTime(item.ts)}</Text>
         </View>
       );
     case 'text':
       return (
         <View style={styles.assistantBlock}>
           <Markdown text={item.text} />
-          {item.streaming ? <Text style={styles.caret}>▍</Text> : null}
+          {item.streaming ? <Text style={styles.caret}>▍</Text> : <Text style={styles.msgTimeLeft}>{fmtTime(item.ts)}</Text>}
         </View>
       );
     case 'thinking':
@@ -464,6 +571,8 @@ const makeStyles = (c: Palette) =>
     userText: { color: c.text, fontSize: font.size.md, lineHeight: 21 },
     assistantBlock: { marginVertical: space.xs },
     caret: { color: c.accent, fontSize: font.size.md },
+    msgTime: { color: c.textFaint, fontSize: font.size.xs, marginTop: 3, marginRight: 2 },
+    msgTimeLeft: { color: c.textFaint, fontSize: font.size.xs, marginTop: 3 },
     notice: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.xs, paddingHorizontal: space.xs },
     noticeText: { color: c.textFaint, fontSize: font.size.xs, flex: 1 },
     resultRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginVertical: space.sm, opacity: 0.6 },
@@ -471,8 +580,24 @@ const makeStyles = (c: Palette) =>
     resultText: { color: c.textFaint, fontSize: font.size.xs },
     working: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
     workingText: { color: c.textDim, fontSize: font.size.sm },
+    planBar: { paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: space.xs, backgroundColor: c.accentSoft, borderTopWidth: 1, borderTopColor: c.border, gap: space.sm },
+    planBarHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+    planBarText: { flex: 1, color: c.text, fontSize: font.size.sm, fontWeight: '600' },
+    planBarBtns: { flexDirection: 'row', gap: space.sm, paddingBottom: space.xs },
+    planBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: c.border, backgroundColor: c.card },
+    planBtnText: { color: c.textDim, fontSize: font.size.sm, fontWeight: '600' },
+    planBtnPrimary: { backgroundColor: c.accent, borderColor: c.accent },
+    planBtnPrimaryText: { color: c.onAccent, fontSize: font.size.sm, fontWeight: '700' },
     inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.bgElevated },
-    input: { flex: 1, color: c.text, fontSize: font.size.md, maxHeight: 140, minHeight: 40, backgroundColor: c.card, borderRadius: radius.lg, borderWidth: 1, borderColor: c.border, paddingHorizontal: space.md, paddingTop: 10, paddingBottom: 10 },
+    inputWrap: { flex: 1, justifyContent: 'flex-end' },
+    input: { color: c.text, fontSize: font.size.md, maxHeight: 140, minHeight: 40, backgroundColor: c.card, borderRadius: radius.lg, borderWidth: 1, borderColor: c.border, paddingLeft: space.md, paddingRight: 30, paddingTop: 10, paddingBottom: 10 },
+    expandBtn: { position: 'absolute', top: 7, right: 7, padding: 2 },
+    fsContainer: { flex: 1, backgroundColor: c.bg },
+    fsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.md, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: c.border },
+    fsHeaderBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+    fsTitle: { color: c.text, fontSize: font.size.md, fontWeight: '600' },
+    fsSend: { width: 36, height: 36, borderRadius: 18, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' },
+    fsInput: { flex: 1, color: c.text, fontSize: font.size.md, paddingHorizontal: space.md, paddingTop: space.md },
     sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' },
     jumpBtn: { position: 'absolute', right: space.lg, bottom: 76, width: 40, height: 40, borderRadius: 20, backgroundColor: c.cardAlt, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', shadowColor: c.shadow, shadowOpacity: c.shadowOpacity, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
     modePill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.accentSoft, paddingHorizontal: space.sm, paddingVertical: 4, borderRadius: radius.pill },

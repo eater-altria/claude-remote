@@ -2,7 +2,10 @@ import type {
   CreateSessionRequest,
   FsListResponse,
   FsRoot,
+  GitStatusDTO,
   HealthResponse,
+  PermissionDecision,
+  QuestionAnswer,
   SessionMeta,
   WireEvent,
 } from './protocol';
@@ -84,6 +87,18 @@ export class ApiClient {
   }
   deleteSession(id: string) {
     return this.req<{ deleted: boolean }>(`/api/sessions/${id}`, { method: 'DELETE' });
+  }
+  gitStatus(id: string) {
+    return this.req<{ git: GitStatusDTO }>(`/api/sessions/${id}/git`, { timeoutMs: 12000 });
+  }
+  gitDiff(id: string, filePath: string) {
+    return this.req<{ diff: string }>(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(filePath)}`, { timeoutMs: 12000 });
+  }
+  respondPermissionRest(id: string, requestId: string, decision: PermissionDecision, remember = false) {
+    return this.req<{ ok: boolean }>(`/api/sessions/${id}/permission`, { method: 'POST', body: JSON.stringify({ requestId, decision, remember }) });
+  }
+  respondQuestionRest(id: string, requestId: string, answer: QuestionAnswer) {
+    return this.req<{ ok: boolean }>(`/api/sessions/${id}/question`, { method: 'POST', body: JSON.stringify({ requestId, answer }) });
   }
   fsRoots() {
     return this.req<{ roots: FsRoot[] }>('/api/fs/roots');

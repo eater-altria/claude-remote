@@ -25,6 +25,11 @@ export function attachGateway(httpServer: HttpServer, cfg: AppConfig, manager: S
     for (const ws of subs) send(ws, msg);
   };
 
+  /** Send to every connected client, regardless of session attachment. */
+  const broadcastAll = (msg: ServerMessage) => {
+    for (const ws of wss.clients) send(ws, msg);
+  };
+
   // --- Forward manager events to subscribed clients ------------------------
   manager.on('event', (sessionId, event) => broadcast(sessionId, { t: 'event', sessionId, event }));
   manager.on('state', (sessionId, meta) => broadcast(sessionId, { t: 'session_state', sessionId, meta }));
@@ -38,6 +43,49 @@ export function attachGateway(httpServer: HttpServer, cfg: AppConfig, manager: S
   );
   manager.on('capabilities', (sessionId, capabilities) => broadcast(sessionId, { t: 'capabilities', sessionId, capabilities }));
   manager.on('transcript_reset', (sessionId, meta) => broadcast(sessionId, { t: 'transcript_reset', sessionId, meta }));
+
+  // --- Global notification alerts (→ on-device local notifications) ---------
+  // Broadcast to ALL clients so a phone is alerted about any session that needs
+  // it, even one it hasn't opened. This replaces the old server→FCM push relay;
+  // delivery only reaches phones whose app is alive with a live socket.
+  const prevState = new Map<string, string>();
+  manager.on('permission_request', (sessionId, request) => {
+    const meta = manager.getMeta(sessionId);
+    broadcastAll({
+      t: 'alert',
+      sessionId,
+      kind: 'permission',
+      requestId: request.requestId,
+      categoryId: 'approval',
+      title: `${meta?.title ?? 'Claude'} · needs approval`,
+      body: request.detail || request.title || 'A tool wants to run.',
+    });
+  });
+  manager.on('question_request', (sessionId, request) => {
+    const meta = manager.getMeta(sessionId);
+    const q = request.questions?.[0];
+    broadcastAll({
+      t: 'alert',
+      sessionId,
+      kind: 'question',
+      requestId: request.requestId,
+      title: `${meta?.title ?? 'Claude'} · has a question`,
+      body: q?.question || 'Tap to answer.',
+    });
+  });
+  manager.on('state', (sessionId, meta) => {
+    const prev = prevState.get(sessionId);
+    prevState.set(sessionId, meta.state);
+    if ((prev === 'running' || prev === 'starting') && meta.state === 'idle') {
+      broadcastAll({
+        t: 'alert',
+        sessionId,
+        kind: 'done',
+        title: `${meta.title} · done`,
+        body: 'Claude finished this turn.',
+      });
+    }
+  });
 
   // --- HTTP upgrade with token auth ----------------------------------------
   httpServer.on('upgrade', (req, socket, head) => {

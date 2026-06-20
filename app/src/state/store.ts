@@ -16,9 +16,19 @@ import type {
   UsageDTO,
 } from '../api/protocol';
 import { applyEvent, reduceEvents, type TranscriptItem } from './transcript';
+import { presentLocalNotification, setActiveSession } from './notifications';
 
 const LEGACY_CONFIG_KEY = 'claude-remote.config.v1';
 const SERVERS_KEY = 'claude-remote.servers.v1';
+const SEEN_KEY = 'claude-remote.seen.v1';
+const USAGE_KEY = 'claude-remote.usage.v1';
+const BUDGET_KEY = 'claude-remote.budget.v1';
+const NOTIF_KEY = 'claude-remote.notifications.v1';
+
+/** Last cumulative cost seen per session, to derive day-over-day spend deltas.
+ * Module-level (persisted alongside spendByDay) — not reactive state. */
+let costSeen: Record<string, number> = {};
+const dayKey = (d = new Date()) => d.toISOString().slice(0, 10);
 
 interface PersistedServers {
   servers: ServerProfile[];
@@ -50,6 +60,14 @@ interface StoreState {
   views: Record<string, SessionView>;
   /** Latest capabilities seen from any session (fallback for the palette). */
   capabilities: Capabilities | null;
+  /** Per-session timestamp of the last time the user viewed it (unread badges). */
+  lastSeen: Record<string, number>;
+  /** Estimated spend per calendar day (YYYY-MM-DD → USD), derived from cost deltas. */
+  spendByDay: Record<string, number>;
+  /** Daily spend budget in USD for the alert, or null when unset. */
+  dailyBudgetUsd: number | null;
+  /** Whether push notifications are enabled (registers the device on connect). */
+  notificationsEnabled: boolean;
 
   // lifecycle
   loadConfig: () => Promise<void>;
@@ -66,6 +84,13 @@ interface StoreState {
   refreshSessions: () => Promise<void>;
   createSession: (cwd: string, opts: { title?: string; model?: string | null; permissionMode?: PermissionMode }) => Promise<SessionMeta>;
   deleteSession: (id: string) => Promise<void>;
+
+  /** Mark a session as seen up to now (clears its unread badge). */
+  markSeen: (id: string) => void;
+  /** Set (or clear) the daily spend budget used for the over-budget alert. */
+  setDailyBudget: (usd: number | null) => void;
+  /** Toggle push notifications on/off. */
+  setNotificationsEnabled: (on: boolean) => void;
 
   // per-session live
   openSession: (id: string) => void;
@@ -128,6 +153,33 @@ export const useStore = create<StoreState>((set, get) => {
     });
   };
 
+  /** Fold each session's cumulative cost into a per-day spend total by tracking
+   * deltas. First sighting of a session sets a baseline (no spend added) so
+   * pre-existing cost isn't dumped into "today" on first launch. */
+  const accumulateCosts = (list: SessionMeta[]) => {
+    const day = dayKey();
+    const spend = { ...get().spendByDay };
+    let changed = false;
+    for (const s of list) {
+      const cur = s.totalCostUsd ?? 0;
+      const prev = costSeen[s.id];
+      if (prev == null) {
+        costSeen[s.id] = cur;
+        changed = true;
+        continue;
+      }
+      if (cur > prev) {
+        spend[day] = (spend[day] ?? 0) + (cur - prev);
+        costSeen[s.id] = cur;
+        changed = true;
+      }
+    }
+    if (changed) {
+      set({ spendByDay: spend });
+      AsyncStorage.setItem(USAGE_KEY, JSON.stringify({ spendByDay: spend, costSeen })).catch(() => {});
+    }
+  };
+
   /** Persist the current server list + active id to storage. */
   const persistServers = async () => {
     const { servers, activeId } = get();
@@ -161,8 +213,28 @@ export const useStore = create<StoreState>((set, get) => {
     sessions: [],
     views: {},
     capabilities: null,
+    lastSeen: {},
+    spendByDay: {},
+    dailyBudgetUsd: null,
+    notificationsEnabled: true,
 
     async loadConfig() {
+      try {
+        const seenRaw = await AsyncStorage.getItem(SEEN_KEY);
+        if (seenRaw) set({ lastSeen: JSON.parse(seenRaw) });
+        const usageRaw = await AsyncStorage.getItem(USAGE_KEY);
+        if (usageRaw) {
+          const parsed = JSON.parse(usageRaw) as { spendByDay?: Record<string, number>; costSeen?: Record<string, number> };
+          set({ spendByDay: parsed.spendByDay ?? {} });
+          costSeen = parsed.costSeen ?? {};
+        }
+        const budgetRaw = await AsyncStorage.getItem(BUDGET_KEY);
+        if (budgetRaw != null) set({ dailyBudgetUsd: JSON.parse(budgetRaw) });
+        const notifRaw = await AsyncStorage.getItem(NOTIF_KEY);
+        if (notifRaw != null) set({ notificationsEnabled: JSON.parse(notifRaw) });
+      } catch {
+        /* ignore */
+      }
       try {
         const raw = await AsyncStorage.getItem(SERVERS_KEY);
         if (raw) {
@@ -247,6 +319,7 @@ export const useStore = create<StoreState>((set, get) => {
       if (!client) return;
       const { sessions } = await client.listSessions();
       set({ sessions });
+      accumulateCosts(sessions);
     },
 
     async createSession(cwd, opts) {
@@ -267,12 +340,29 @@ export const useStore = create<StoreState>((set, get) => {
       });
     },
 
+    markSeen(id) {
+      set((s) => ({ lastSeen: { ...s.lastSeen, [id]: Date.now() } }));
+      AsyncStorage.setItem(SEEN_KEY, JSON.stringify(get().lastSeen)).catch(() => {});
+    },
+    setDailyBudget(usd) {
+      set({ dailyBudgetUsd: usd });
+      AsyncStorage.setItem(BUDGET_KEY, JSON.stringify(usd)).catch(() => {});
+    },
+    setNotificationsEnabled(on) {
+      set({ notificationsEnabled: on });
+      AsyncStorage.setItem(NOTIF_KEY, JSON.stringify(on)).catch(() => {});
+    },
+
     openSession(id) {
       set({ views: ensureView(id) });
+      get().markSeen(id);
+      setActiveSession(id);
       ws?.attach(id);
     },
 
     closeSession(id) {
+      get().markSeen(id);
+      setActiveSession(null);
       ws?.detach(id);
     },
 
@@ -322,12 +412,26 @@ export const useStore = create<StoreState>((set, get) => {
         case 'session_state': {
           const meta = msg.meta;
           patchView(msg.sessionId, (v) => ({ ...v, meta }));
-          set((s) => ({ sessions: s.sessions.map((x) => (x.id === meta.id ? meta : x)) }));
+          set((s) => ({ sessions: s.sessions.some((x) => x.id === meta.id) ? s.sessions.map((x) => (x.id === meta.id ? meta : x)) : [meta, ...s.sessions] }));
+          accumulateCosts([meta]);
           break;
         }
         case 'capabilities':
           patchView(msg.sessionId, (v) => ({ ...v, capabilities: msg.capabilities }));
           set({ capabilities: msg.capabilities });
+          break;
+        case 'alert':
+          // Server hint → fire an on-device local notification (replaces FCM).
+          if (get().notificationsEnabled) {
+            presentLocalNotification({
+              sessionId: msg.sessionId,
+              kind: msg.kind,
+              title: msg.title,
+              body: msg.body,
+              requestId: msg.requestId,
+              categoryId: msg.categoryId,
+            }).catch(() => {});
+          }
           break;
         case 'transcript_reset':
           patchView(msg.sessionId, (v) => ({ ...v, items: [], permissions: [], questions: [], meta: msg.meta }));

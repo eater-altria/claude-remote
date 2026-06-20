@@ -1,5 +1,7 @@
 import React from 'react';
-import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { font, radius, space, type Palette } from '../theme/theme';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -183,14 +185,7 @@ function Block({ block, dim }: { block: Block; dim: boolean }) {
   const baseColor = dim ? colors.textDim : colors.text;
   switch (block.kind) {
     case 'code':
-      return (
-        <View style={styles.codeBlock}>
-          {block.lang ? <Text style={styles.codeLang}>{block.lang}</Text> : null}
-          <Text style={styles.codeText} selectable>
-            {block.content}
-          </Text>
-        </View>
-      );
+      return <CodeBlock lang={block.lang} content={block.content} />;
     case 'heading':
       return (
         <Text style={[styles.heading, { fontSize: block.level <= 2 ? font.size.lg : font.size.md, color: baseColor }]}>
@@ -338,6 +333,133 @@ function TableView({ block, dim }: { block: Extract<Block, { kind: 'table' }>; d
   );
 }
 
+/** Fenced code block with a language label, copy button, and lightweight,
+ * dependency-free syntax highlighting that works across common languages. */
+function CodeBlock({ lang, content }: { lang?: string; content: string }) {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const [copied, setCopied] = React.useState(false);
+  const tokens = React.useMemo(() => highlight(content, colors), [content, colors]);
+
+  const copy = React.useCallback(() => {
+    Clipboard.setStringAsync(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }, [content]);
+
+  const body = (
+    <Text style={styles.codeText} selectable>
+      {tokens.map((t, i) => (
+        <Text key={i} style={t.color ? { color: t.color, fontStyle: t.italic ? 'italic' : 'normal' } : undefined}>
+          {t.text}
+        </Text>
+      ))}
+    </Text>
+  );
+
+  return (
+    <View style={styles.codeBlock}>
+      <View style={styles.codeHeader}>
+        <Text style={styles.codeLang}>{lang || 'code'}</Text>
+        <Pressable onPress={copy} hitSlop={8} style={styles.copyBtn}>
+          <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={13} color={copied ? colors.success : colors.textFaint} />
+          <Text style={[styles.copyText, copied && { color: colors.success }]}>{copied ? 'Copied' : 'Copy'}</Text>
+        </Pressable>
+      </View>
+      {/* Long lines scroll horizontally instead of wrapping mid-token. */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>{body}</ScrollView>
+    </View>
+  );
+}
+
+type Tok = { text: string; color?: string; italic?: boolean };
+
+// A pragmatic keyword set spanning JS/TS, Python, Go, Rust, Java, C-likes, Ruby,
+// shell. False positives across languages are harmless for display purposes.
+const KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+  'break', 'continue', 'new', 'class', 'extends', 'super', 'this', 'import', 'export', 'from', 'as',
+  'async', 'await', 'yield', 'try', 'catch', 'finally', 'throw', 'typeof', 'instanceof', 'in', 'of',
+  'def', 'elif', 'lambda', 'pass', 'with', 'and', 'or', 'not', 'None', 'True', 'False', 'self',
+  'func', 'package', 'type', 'struct', 'interface', 'map', 'go', 'defer', 'chan', 'fn', 'let', 'mut',
+  'pub', 'use', 'impl', 'trait', 'match', 'enum', 'where', 'public', 'private', 'protected', 'static',
+  'void', 'int', 'float', 'double', 'bool', 'boolean', 'string', 'char', 'long', 'short', 'null', 'nil',
+  'true', 'false', 'undefined', 'end', 'then', 'elsif', 'require', 'module', 'echo', 'fi', 'esac',
+]);
+
+/** Tokenize code into colored spans. Strings and comments take priority so we
+ * never recolor keywords that live inside them. */
+function highlight(code: string, c: Palette): Tok[] {
+  const out: Tok[] = [];
+  const n = code.length;
+  let i = 0;
+  const kw = c.accent;
+  const str = c.success;
+  const num = c.user;
+  const com = c.textFaint;
+  const isWord = (ch: string) => /[A-Za-z0-9_$]/.test(ch);
+  const push = (text: string, color?: string, italic?: boolean) => { if (text) out.push({ text, color, italic }); };
+
+  while (i < n) {
+    const ch = code[i];
+    const next = code[i + 1];
+    // line comments: // and #
+    if ((ch === '/' && next === '/') || ch === '#') {
+      let j = i;
+      while (j < n && code[j] !== '\n') j++;
+      push(code.slice(i, j), com, true);
+      i = j;
+      continue;
+    }
+    // block comment /* ... */
+    if (ch === '/' && next === '*') {
+      let j = i + 2;
+      while (j < n && !(code[j] === '*' && code[j + 1] === '/')) j++;
+      j = Math.min(n, j + 2);
+      push(code.slice(i, j), com, true);
+      i = j;
+      continue;
+    }
+    // strings: ' " `
+    if (ch === '"' || ch === "'" || ch === '`') {
+      let j = i + 1;
+      while (j < n) {
+        if (code[j] === '\\') { j += 2; continue; }
+        if (code[j] === ch) { j++; break; }
+        j++;
+      }
+      push(code.slice(i, j), str);
+      i = j;
+      continue;
+    }
+    // numbers
+    if (ch >= '0' && ch <= '9') {
+      let j = i;
+      while (j < n && /[0-9a-fA-FxX._]/.test(code[j])) j++;
+      push(code.slice(i, j), num);
+      i = j;
+      continue;
+    }
+    // identifiers / keywords
+    if (isWord(ch)) {
+      let j = i;
+      while (j < n && isWord(code[j])) j++;
+      const w = code.slice(i, j);
+      push(w, KEYWORDS.has(w) ? kw : undefined);
+      i = j;
+      continue;
+    }
+    // run of other chars (operators, punctuation, whitespace)
+    let j = i;
+    while (j < n && !isWord(code[j]) && code[j] !== '"' && code[j] !== "'" && code[j] !== '`' && code[j] !== '#' && !(code[j] >= '0' && code[j] <= '9') && !(code[j] === '/' && (code[j + 1] === '/' || code[j + 1] === '*'))) j++;
+    if (j === i) j = i + 1;
+    push(code.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+
 const makeStyles = (c: Palette) =>
   StyleSheet.create({
     paraText: { fontSize: font.size.md, lineHeight: 22, marginVertical: 3 },
@@ -345,7 +467,10 @@ const makeStyles = (c: Palette) =>
     listRow: { flexDirection: 'row', alignItems: 'flex-start', marginVertical: 1, paddingRight: space.sm },
     bullet: { width: 22, fontSize: font.size.md, lineHeight: 22, fontWeight: '700' },
     codeBlock: { backgroundColor: c.codeBg, borderRadius: radius.md, padding: space.md, marginVertical: space.xs, borderWidth: 1, borderColor: c.border },
-    codeLang: { color: c.textFaint, fontSize: font.size.xs, marginBottom: space.xs, fontFamily: font.mono },
+    codeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.xs },
+    codeLang: { color: c.textFaint, fontSize: font.size.xs, fontFamily: font.mono },
+    copyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 4 },
+    copyText: { color: c.textFaint, fontSize: font.size.xs, fontWeight: '600' },
     codeText: { color: c.codeText, fontFamily: font.mono, fontSize: font.size.sm, lineHeight: 19 },
     inlineCode: { fontFamily: font.mono, fontSize: font.size.sm, color: c.accent, backgroundColor: c.accentSoft },
     link: { color: c.user, textDecorationLine: 'underline' },

@@ -7,7 +7,8 @@ import { createRequire } from 'node:module';
 import type { AppConfig } from '../config.js';
 import type { SessionManager } from '../claude/manager.js';
 import { listDir, makeDir } from './fsbrowse.js';
-import type { CreateSessionRequest, HealthResponse } from '../protocol.js';
+import { gitStatus, gitDiff } from './git.js';
+import type { CreateSessionRequest, HealthResponse, PermissionDecision, QuestionAnswer } from '../protocol.js';
 import { PROTOCOL_VERSION } from '../protocol.js';
 import { createLogger } from '../logger.js';
 
@@ -152,6 +153,65 @@ export function buildApp(cfg: AppConfig, manager: SessionManager) {
     wrap(async (req, res) => {
       const ok = await manager.delete(req.params.id);
       res.json({ deleted: ok });
+    }),
+  );
+
+  // --- Git status for a session's working directory ------------------------
+  app.get(
+    '/api/sessions/:id/git',
+    wrap(async (req, res) => {
+      const meta = manager.getMeta(req.params.id);
+      if (!meta) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      res.json({ git: await gitStatus(meta.cwd) });
+    }),
+  );
+
+  // --- Unified diff for a single file in a session's working directory ------
+  app.get(
+    '/api/sessions/:id/git/diff',
+    wrap(async (req, res) => {
+      const meta = manager.getMeta(req.params.id);
+      if (!meta) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      const filePath = typeof req.query.path === 'string' ? req.query.path : '';
+      if (!filePath) {
+        res.status(400).json({ error: 'path query parameter is required' });
+        return;
+      }
+      res.json({ diff: await gitDiff(meta.cwd, filePath) });
+    }),
+  );
+
+  // Respond to a permission / question over REST too, so a notification action
+  // can resolve a prompt even when no WebSocket is currently connected.
+  app.post(
+    '/api/sessions/:id/permission',
+    wrap(async (req, res) => {
+      const { requestId, decision, remember } = req.body as { requestId: string; decision: PermissionDecision; remember?: boolean };
+      if (!requestId || (decision !== 'allow' && decision !== 'deny')) {
+        res.status(400).json({ error: 'requestId and decision (allow|deny) are required' });
+        return;
+      }
+      const ok = await manager.respondPermission(req.params.id, requestId, decision, remember ?? false);
+      res.json({ ok });
+    }),
+  );
+
+  app.post(
+    '/api/sessions/:id/question',
+    wrap(async (req, res) => {
+      const { requestId, answer } = req.body as { requestId: string; answer: QuestionAnswer };
+      if (!requestId || !answer) {
+        res.status(400).json({ error: 'requestId and answer are required' });
+        return;
+      }
+      const ok = await manager.respondQuestion(req.params.id, requestId, answer);
+      res.json({ ok });
     }),
   );
 

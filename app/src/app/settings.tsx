@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,46 @@ function AppearanceCard() {
           >
             <Ionicons name={opt.icon as any} size={16} color={active ? colors.onAccent : colors.textDim} />
             <Text style={[styles.segmentText, { color: active ? colors.onAccent : colors.textDim }]}>{opt.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function NotificationsCard() {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const enabled = useStore((s) => s.notificationsEnabled);
+  const setNotificationsEnabled = useStore((s) => s.setNotificationsEnabled);
+  return (
+    <View style={styles.toggleRow}>
+      <Ionicons name="notifications-outline" size={20} color={colors.accent} />
+      <Text style={styles.toggleLabel}>Notifications</Text>
+      <Switch
+        value={enabled}
+        onValueChange={setNotificationsEnabled}
+        trackColor={{ true: colors.accent, false: colors.borderStrong }}
+        thumbColor={colors.onAccent}
+      />
+    </View>
+  );
+}
+
+const BUDGET_PRESETS: (number | null)[] = [null, 5, 10, 20, 50, 100];
+
+function BudgetCard() {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const budget = useStore((s) => s.dailyBudgetUsd);
+  const setDailyBudget = useStore((s) => s.setDailyBudget);
+  return (
+    <View style={styles.budgetRow}>
+      {BUDGET_PRESETS.map((b) => {
+        const active = budget === b;
+        return (
+          <Pressable key={String(b)} style={[styles.budgetChip, active && styles.budgetChipActive]} onPress={() => setDailyBudget(b)}>
+            <Text style={[styles.budgetChipText, active && { color: colors.onAccent }]}>{b == null ? 'Off' : `$${b}`}</Text>
           </Pressable>
         );
       })}
@@ -84,6 +124,14 @@ export default function SettingsScreen() {
       <Text style={styles.sectionTitle}>Appearance</Text>
       <Text style={styles.hint}>Follow your device, or pick a look.</Text>
       <AppearanceCard />
+
+      <Text style={[styles.sectionTitle, { marginTop: space.xl }]}>Notifications</Text>
+      <Text style={styles.hint}>Get pinged when a session needs approval, asks a question, or finishes — with Approve / Deny right in the notification.</Text>
+      <NotificationsCard />
+
+      <Text style={[styles.sectionTitle, { marginTop: space.xl }]}>Daily budget</Text>
+      <Text style={styles.hint}>Get an alert when estimated spend across all sessions passes this in a day.</Text>
+      <BudgetCard />
 
       <Text style={[styles.sectionTitle, { marginTop: space.xl }]}>Servers</Text>
       <Text style={styles.hint}>Tap a server to switch to it. The app reconnects instantly.</Text>
@@ -259,6 +307,14 @@ const makeStyles = (c: Palette) =>
     segmentItem: { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', paddingVertical: space.sm, borderRadius: radius.sm },
     segmentItemActive: { backgroundColor: c.accent },
     segmentText: { fontSize: font.size.sm, fontWeight: '700' },
+
+    budgetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
+    budgetChip: { paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: c.border, backgroundColor: c.card },
+    budgetChipActive: { backgroundColor: c.accent, borderColor: c.accent },
+    budgetChipText: { color: c.textDim, fontSize: font.size.sm, fontWeight: '700' },
+
+    toggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.md, backgroundColor: c.card, borderRadius: radius.md, borderWidth: 1, borderColor: c.border, paddingHorizontal: space.lg, paddingVertical: space.md },
+    toggleLabel: { flex: 1, color: c.text, fontSize: font.size.md, fontWeight: '600' },
 
     empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.xl },
     emptyText: { color: c.textDim, fontSize: font.size.sm, textAlign: 'center', maxWidth: 280 },

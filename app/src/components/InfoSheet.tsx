@@ -196,6 +196,60 @@ function UsageBody({ data }: { data: UsageDTO }) {
           ))}
         </View>
       ) : null}
+
+      <UsageHistory />
+    </View>
+  );
+}
+
+/** 7-day spend history (estimated from per-session cost deltas) with a daily
+ * budget marker. Spend is tracked across all sessions on this server. */
+function UsageHistory() {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => makeStyles(colors), [colors]);
+  const spendByDay = useStore((s) => s.spendByDay);
+  const budget = useStore((s) => s.dailyBudgetUsd);
+
+  const days = React.useMemo(() => {
+    const out: { key: string; label: string; amount: number }[] = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      out.push({ key, label: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][d.getDay()], amount: spendByDay[key] ?? 0 });
+    }
+    return out;
+  }, [spendByDay]);
+
+  const max = Math.max(budget ?? 0, ...days.map((d) => d.amount), 0.01);
+  const today = days[days.length - 1]?.amount ?? 0;
+  const over = budget != null && today > budget;
+
+  return (
+    <View>
+      <Text style={styles.sectionLabel}>Daily spend (7 days)</Text>
+      <View style={styles.histRow}>
+        {days.map((d, i) => {
+          const h = Math.max(3, (d.amount / max) * 64);
+          const isToday = i === days.length - 1;
+          const barColor = budget != null && d.amount > budget ? colors.danger : isToday ? colors.accent : colors.accentDim;
+          return (
+            <View key={d.key} style={styles.histCol}>
+              <Text style={styles.histAmt}>{d.amount > 0 ? (d.amount < 1 ? d.amount.toFixed(2) : d.amount.toFixed(1)) : ''}</Text>
+              <View style={styles.histBarTrack}>
+                <View style={[styles.histBar, { height: h, backgroundColor: barColor }]} />
+              </View>
+              <Text style={[styles.histDay, isToday && { color: colors.text, fontWeight: '700' }]}>{d.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+      <Text style={[styles.budgetLine, over && { color: colors.danger }]}>
+        {budget == null
+          ? `Today: ${fmtUsd(today)}  ·  set a daily budget in Settings`
+          : `Today: ${fmtUsd(today)} / ${fmtUsd(budget)}${over ? '  ⚠ over budget' : ''}`}
+      </Text>
     </View>
   );
 }
@@ -250,6 +304,14 @@ const makeStyles = (c: Palette) =>
     modelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm, paddingVertical: space.xs },
     modelName: { color: c.textDim, fontSize: font.size.sm, fontFamily: font.mono, flexShrink: 1 },
     modelMeta: { color: c.textFaint, fontSize: font.size.xs },
+
+    histRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 96, gap: space.xs },
+    histCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', gap: 3 },
+    histAmt: { color: c.textFaint, fontSize: 9, height: 12 },
+    histBarTrack: { height: 64, justifyContent: 'flex-end' },
+    histBar: { width: 18, borderRadius: 4 },
+    histDay: { color: c.textFaint, fontSize: font.size.xs },
+    budgetLine: { color: c.textDim, fontSize: font.size.xs, marginTop: space.sm, textAlign: 'center' },
 
     cancel: { padding: space.md, alignItems: 'center', marginTop: space.sm },
     cancelText: { color: c.textDim, fontSize: font.size.md, fontWeight: '600' },

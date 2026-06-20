@@ -204,6 +204,28 @@ export interface ModelInfoDTO {
 }
 
 // ---------------------------------------------------------------------------
+// Git status (working directory of a session)
+// ---------------------------------------------------------------------------
+export interface GitFileChange {
+  /** Path relative to the repo root. */
+  path: string;
+  /** Two-letter porcelain status code, e.g. " M", "A ", "??", "MM". */
+  code: string;
+  /** Whether there's a staged component (index side of the status code). */
+  staged: boolean;
+}
+export interface GitStatusDTO {
+  isRepo: boolean;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  files: GitFileChange[];
+  insertions: number;
+  deletions: number;
+  clean: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Slash-command capabilities (for the in-app command palette)
 // ---------------------------------------------------------------------------
 export interface SlashCommandDTO {
@@ -268,6 +290,13 @@ export type ServerMessage =
   | { t: 'question_request'; sessionId: string; request: QuestionRequest }
   | { t: 'question_resolved'; sessionId: string; requestId: string }
   | { t: 'session_state'; sessionId: string; meta: SessionMeta }
+  /**
+   * A global notification hint, broadcast to EVERY connected client regardless of
+   * which sessions it has attached. The app turns each one into a local (on-device)
+   * notification — this replaces the old server→FCM push relay. `categoryId`
+   * 'approval' carries the Approve/Deny action buttons.
+   */
+  | { t: 'alert'; sessionId: string; kind: 'permission' | 'question' | 'done'; title: string; body: string; requestId?: string; categoryId?: string }
   | { t: 'capabilities'; sessionId: string; capabilities: Capabilities }
   /** The conversation context was cleared (e.g. via /clear) — wipe the transcript. */
   | { t: 'transcript_reset'; sessionId: string; meta: SessionMeta }

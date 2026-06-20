@@ -500,7 +500,11 @@ export class ClaudeSession extends EventEmitter {
     // Skip the doomed live probe once we know this CLI doesn't answer it.
     if (this.liveContextUnavailable) return this.estimateContextUsage();
     try {
-      const r = await this.withControlTimeout(this.q.getContextUsage());
+      // The CLI tallies the full breakdown lazily — the first call after a turn
+      // can take ~7-8s (subsequent calls are cached and fast). A tight timeout
+      // here is why this used to fall back to the single-bucket estimate. Allow
+      // ample headroom, staying safely under the app's 20s request timeout.
+      const r = await this.withControlTimeout(this.q.getContextUsage(), 15000);
       return {
         model: r.model,
         totalTokens: r.totalTokens,
@@ -509,10 +513,14 @@ export class ClaudeSession extends EventEmitter {
         categories: (r.categories ?? []).map((c) => ({ name: c.name, tokens: c.tokens, color: c.color })),
       };
     } catch (e) {
-      // The live request is unavailable on some CLI builds — estimate from the
-      // last turn's usage so the user still sees an occupancy figure.
-      this.liveContextUnavailable = true;
-      log.warn(`[${this.id}] getContextUsage fell back to estimate:`, (e as Error).message);
+      const msg = (e as Error).message;
+      // A transient timeout (e.g. the CLI was mid-turn, or the context is large
+      // and slow to tally) must NOT permanently disable the live breakdown —
+      // otherwise one slow probe latches the whole session onto the single-bucket
+      // estimate and even Refresh can't recover. Only latch off when the request
+      // is genuinely unsupported by this CLI build; timeouts just fall back once.
+      if (!/timed out/i.test(msg)) this.liveContextUnavailable = true;
+      log.warn(`[${this.id}] getContextUsage fell back to estimate:`, msg);
       return this.estimateContextUsage();
     }
   }

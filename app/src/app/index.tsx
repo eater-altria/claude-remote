@@ -34,10 +34,22 @@ export default function SessionsScreen() {
   const sessions = useStore((s) => s.sessions);
   const servers = useStore((s) => s.servers);
   const activeId = useStore((s) => s.activeId);
+  const lastSeen = useStore((s) => s.lastSeen);
   const switchServer = useStore((s) => s.switchServer);
   const refreshSessions = useStore((s) => s.refreshSessions);
   const deleteSession = useStore((s) => s.deleteSession);
   const activeServer = servers.find((s) => s.id === activeId);
+
+  // A session is "unread" if it changed since the user last viewed it. New
+  // sessions (no lastSeen entry) are treated as already-seen to avoid noise.
+  const isUnread = (s: SessionMeta) => lastSeen[s.id] != null && s.updatedAt > lastSeen[s.id];
+  const needsCount = sessions.filter((s) => s.state === 'awaiting_permission' || s.state === 'awaiting_question').length;
+  const workingCount = sessions.filter((s) => s.state === 'running' || s.state === 'starting').length;
+
+  const spendByDay = useStore((s) => s.spendByDay);
+  const dailyBudget = useStore((s) => s.dailyBudgetUsd);
+  const todaySpend = spendByDay[new Date().toISOString().slice(0, 10)] ?? 0;
+  const overBudget = dailyBudget != null && todaySpend > dailyBudget;
 
   const quickSwitch = React.useCallback(() => {
     if (servers.length < 2) {
@@ -74,7 +86,13 @@ export default function SessionsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       refresh();
-    }, [refresh]),
+      // Live-ish dashboard: poll session states while this screen is focused so
+      // badges update without a manual pull-to-refresh.
+      const timer = setInterval(() => {
+        refreshSessions().catch(() => {});
+      }, 6000);
+      return () => clearInterval(timer);
+    }, [refresh, refreshSessions]),
   );
 
   const confirmDelete = (s: SessionMeta) => {
@@ -134,6 +152,32 @@ export default function SessionsScreen() {
         keyExtractor={(s) => s.id}
         contentContainerStyle={{ padding: space.lg, paddingBottom: 120 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
+        ListHeaderComponent={
+          (sessions.length > 0 && (needsCount > 0 || workingCount > 0)) || overBudget ? (
+            <View style={styles.summary}>
+              {overBudget ? (
+                <View style={[styles.summaryChip, { backgroundColor: colors.danger + '22' }]}>
+                  <Ionicons name="warning" size={13} color={colors.danger} />
+                  <Text style={[styles.summaryText, { color: colors.danger }]}>
+                    ${todaySpend.toFixed(2)} / ${dailyBudget!.toFixed(0)} today
+                  </Text>
+                </View>
+              ) : null}
+              {needsCount > 0 ? (
+                <View style={[styles.summaryChip, { backgroundColor: colors.accent + '22' }]}>
+                  <View style={[styles.dot, { backgroundColor: colors.accent }]} />
+                  <Text style={[styles.summaryText, { color: colors.accent }]}>{needsCount} need{needsCount > 1 ? '' : 's'} you</Text>
+                </View>
+              ) : null}
+              {workingCount > 0 ? (
+                <View style={[styles.summaryChip, { backgroundColor: colors.warning + '22' }]}>
+                  <ActivityIndicator size="small" color={colors.warning} />
+                  <Text style={[styles.summaryText, { color: colors.warning }]}>{workingCount} working</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.center}>
             <Ionicons name="chatbubbles-outline" size={48} color={colors.textFaint} />
@@ -144,9 +188,12 @@ export default function SessionsScreen() {
         renderItem={({ item }) => (
           <Pressable style={styles.row} onPress={() => router.push(`/session/${item.id}`)}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle} numberOfLines={1}>
-                {item.title}
-              </Text>
+              <View style={styles.titleRow}>
+                {isUnread(item) ? <View style={styles.unreadDot} /> : null}
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {item.title}
+                </Text>
+              </View>
               <Text style={styles.rowPath} numberOfLines={1}>
                 {item.cwd}
               </Text>
@@ -210,7 +257,12 @@ const makeStyles = (c: Palette) =>
       shadowOffset: { width: 0, height: 3 },
       elevation: c.scheme === 'light' ? 2 : 0,
     },
-    rowTitle: { color: c.text, fontSize: font.size.md, fontWeight: '700' },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.accent },
+    rowTitle: { color: c.text, fontSize: font.size.md, fontWeight: '700', flexShrink: 1 },
+    summary: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md },
+    summaryChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill },
+    summaryText: { fontSize: font.size.sm, fontWeight: '700' },
     rowPath: { color: c.textFaint, fontSize: font.size.xs, fontFamily: font.mono, marginTop: 2 },
     rowMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
     badge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.sm, paddingVertical: 3, borderRadius: radius.pill },

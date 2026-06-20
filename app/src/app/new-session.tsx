@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useStore, getClient } from '../state/store';
+import { addRecent, getFavorites, getRecents, toggleFavorite } from '../state/cwdHistory';
 import { font, radius, space, type Palette } from '../theme/theme';
 import { useTheme } from '../theme/ThemeProvider';
 import type { FsEntry, FsRoot, PermissionMode } from '../api/protocol';
@@ -21,6 +22,7 @@ export default function NewSessionScreen() {
   const { colors } = useTheme();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
   const createSession = useStore((s) => s.createSession);
+  const activeId = useStore((s) => s.activeId);
 
   const [roots, setRoots] = React.useState<FsRoot[]>([]);
   const [path, setPath] = React.useState<string>('');
@@ -30,6 +32,19 @@ export default function NewSessionScreen() {
   const [mode, setMode] = React.useState<PermissionMode>('default');
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [recents, setRecents] = React.useState<string[]>([]);
+  const [favorites, setFavorites] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    getRecents(activeId).then(setRecents).catch(() => {});
+    getFavorites(activeId).then(setFavorites).catch(() => {});
+  }, [activeId]);
+
+  const isFav = !!path && favorites.includes(path);
+  const onToggleFav = React.useCallback(() => {
+    if (!path) return;
+    toggleFavorite(activeId, path).then(setFavorites).catch(() => {});
+  }, [activeId, path]);
 
   const load = React.useCallback(async (p?: string) => {
     const client = getClient();
@@ -66,6 +81,7 @@ export default function NewSessionScreen() {
     setError(null);
     try {
       const session = await createSession(path, { permissionMode: mode, title: basename(path) });
+      addRecent(activeId, path).catch(() => {});
       router.replace(`/session/${session.id}`);
     } catch (e: any) {
       setError(e?.message || 'Could not create session');
@@ -92,6 +108,28 @@ export default function NewSessionScreen() {
         />
       </View>
 
+      {/* Quick access: pinned favorites + recently used dirs */}
+      {(favorites.length > 0 || recents.length > 0) ? (
+        <View style={styles.quickRow}>
+          <FlatList
+            horizontal
+            data={[
+              ...favorites.map((p) => ({ p, fav: true })),
+              ...recents.filter((p) => !favorites.includes(p)).map((p) => ({ p, fav: false })),
+            ]}
+            keyExtractor={(it) => it.p}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: space.lg, gap: space.sm }}
+            renderItem={({ item }) => (
+              <Pressable style={styles.quickChip} onPress={() => load(item.p)}>
+                <Ionicons name={item.fav ? 'star' : 'time-outline'} size={13} color={item.fav ? colors.warning : colors.textFaint} />
+                <Text style={styles.quickChipText} numberOfLines={1}>{basename(item.p)}</Text>
+              </Pressable>
+            )}
+          />
+        </View>
+      ) : null}
+
       {/* Path bar */}
       <View style={styles.pathBar}>
         <Pressable onPress={() => parent && load(parent)} hitSlop={8} disabled={!parent} style={{ opacity: parent ? 1 : 0.3 }}>
@@ -100,6 +138,9 @@ export default function NewSessionScreen() {
         <Text style={styles.pathText} numberOfLines={1} ellipsizeMode="head">
           {path || '…'}
         </Text>
+        <Pressable onPress={onToggleFav} hitSlop={8} disabled={!path} style={{ opacity: path ? 1 : 0.3 }}>
+          <Ionicons name={isFav ? 'star' : 'star-outline'} size={20} color={isFav ? colors.warning : colors.textDim} />
+        </Pressable>
       </View>
 
       {loading ? (
@@ -178,6 +219,9 @@ const makeStyles = (c: Palette) =>
       elevation: c.scheme === 'light' ? 2 : 0,
     },
     rootChipText: { color: c.text, fontSize: font.size.sm },
+    quickRow: { paddingVertical: space.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
+    quickChip: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: 180, backgroundColor: c.cardAlt, paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: c.border },
+    quickChipText: { color: c.textDim, fontSize: font.size.sm, flexShrink: 1 },
     pathBar: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.md, backgroundColor: c.bgElevated },
     pathText: { color: c.textDim, fontSize: font.size.sm, fontFamily: font.mono, flex: 1 },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
