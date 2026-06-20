@@ -131,8 +131,39 @@ function defaultRoots(): { name: string; path: string }[] {
       /* ignore */
     }
   }
-  roots.push({ name: process.platform === 'win32' ? 'C:\\' : 'Filesystem root', path: process.platform === 'win32' ? 'C:\\' : '/' });
+  if (process.platform === 'win32') roots.push(...windowsDrives());
+  else roots.push({ name: 'Filesystem root', path: '/' });
   return roots;
+}
+
+/** The picker's roots: a hand-written `fsRoots` (config.json) wins, else the
+ *  auto-detected defaults. On Windows we always append any mounted drive that's
+ *  missing, so a stale persisted list (e.g. one baked by an older build that only
+ *  knew C:\) can't hide other disks from the picker. */
+function resolveFsRoots(persisted: { name: string; path: string }[] | undefined): { name: string; path: string }[] {
+  const roots = persisted && persisted.length ? [...persisted] : defaultRoots();
+  if (process.platform === 'win32') {
+    const have = new Set(roots.map((r) => r.path.toUpperCase()));
+    for (const d of windowsDrives()) if (!have.has(d.path.toUpperCase())) roots.push(d);
+  }
+  return roots;
+}
+
+/** Mounted Windows drive roots (C:–Z:). Each drive root has no parent
+ *  (path.dirname('E:\\') === 'E:\\'), so the picker can't navigate off C: to
+ *  another disk unless every drive is offered as a top-level root. A:/B: are
+ *  skipped to avoid legacy floppy probe delays. */
+function windowsDrives(): { name: string; path: string }[] {
+  const out: { name: string; path: string }[] = [];
+  for (let code = 'C'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+    const drive = `${String.fromCharCode(code)}:\\`;
+    try {
+      if (fs.existsSync(drive)) out.push({ name: drive, path: drive });
+    } catch {
+      /* drive not ready (e.g. empty removable) — skip */
+    }
+  }
+  return out;
 }
 
 /** Expand a leading `~` to the home dir. dotenv does NOT do shell expansion, so a
@@ -178,7 +209,7 @@ export function loadConfig(): AppConfig {
     // a hermetic server (set to []).
     settingSources: persisted.settingSources ?? ['user', 'project', 'local'],
     defaultModel: persisted.defaultModel ?? null,
-    fsRoots: persisted.fsRoots && persisted.fsRoots.length ? persisted.fsRoots : defaultRoots(),
+    fsRoots: resolveFsRoots(persisted.fsRoots),
     maxLiveSessions: Number(process.env.CLAUDE_REMOTE_MAX_LIVE || persisted.maxLiveSessions || 12),
     relay: loadRelayConfig(persisted.relay),
   };
