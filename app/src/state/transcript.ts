@@ -1,4 +1,4 @@
-import type { FileChange, WireEvent } from '../api/protocol';
+import type { FileChange, SubagentItem, TodoItem, WireEvent } from '../api/protocol';
 
 export type TranscriptItem =
   | { type: 'user'; id: string; text: string; imageCount?: number; ts: number }
@@ -113,4 +113,20 @@ export function reduceEvents(events: WireEvent[]): TranscriptItem[] {
   let items: TranscriptItem[] = [];
   for (const ev of events) items = applyEvent(items, ev);
   return items;
+}
+
+/** The agent's latest todo checklist from a backlog (each TodoWrite replaces the
+ *  whole list, so the last `todos` event wins). */
+export function latestTodos(events: WireEvent[]): TodoItem[] {
+  let todos: TodoItem[] = [];
+  for (const ev of events) if (ev.kind === 'todos') todos = ev.items;
+  return todos;
+}
+
+/** The session's latest subagent roster from a backlog (each `subagents` event
+ *  replaces the whole roster, so the last one wins). */
+export function latestSubagents(events: WireEvent[]): SubagentItem[] {
+  let agents: SubagentItem[] = [];
+  for (const ev of events) if (ev.kind === 'subagents') agents = ev.items;
+  return agents;
 }

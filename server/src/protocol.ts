@@ -68,6 +68,28 @@ export interface FileChange {
   content?: string;
 }
 
+/** One entry of the agent's TodoWrite checklist. */
+export interface TodoItem {
+  /** Imperative description, e.g. "Add QR scanner". */
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  /** Present-continuous form shown while in_progress, e.g. "Adding QR scanner". */
+  activeForm?: string;
+}
+
+/** One spawned `Task` subagent, tracked by its tool_use_id for the always-on
+ *  subagent panel. */
+export interface SubagentItem {
+  /** The Task tool_use_id that spawned it (also the finish correlation key). */
+  id: string;
+  /** subagent_type, e.g. "Explore", "general-purpose". */
+  type: string;
+  /** Short description from the Task tool input. */
+  description: string;
+  status: 'running' | 'completed' | 'failed';
+  ts: number;
+}
+
 export type WireEvent =
   // A user turn (your message).
   | { kind: 'user'; id: string; text: string; imageCount?: number; ts: number }
@@ -101,6 +123,12 @@ export type WireEvent =
     }
   // A subagent (Task) lifecycle notice.
   | { kind: 'task'; id: string; status: 'started' | 'progress' | 'completed' | 'failed'; description: string; ts: number }
+  // The agent's current TodoWrite checklist (whole list, replace-on-each). Drives
+  // the always-on task-progress panel in the app rather than a transcript card.
+  | { kind: 'todos'; id: string; items: TodoItem[]; ts: number }
+  // The session's spawned Task subagents (whole roster, replace-on-each). Drives
+  // the always-on subagent panel above the task panel.
+  | { kind: 'subagents'; id: string; items: SubagentItem[]; ts: number }
   // End of an assistant turn.
   | {
       kind: 'result';

@@ -35,19 +35,21 @@ install/  自启安装器（macOS launchd / Linux systemd）
 - `index.ts` 启动装配 · `config.ts` 配置/token/claude 探测 · `logger.ts`
 - `protocol.ts` — ★ 线协议**唯一真源**
 - `claude/` — `manager.ts`（会话注册表/持久化/LRU）· `session.ts`（单个常驻 `query()` 生命周期，最核心）· `permissions.ts`（权限策略 + diff 派生）· `transform.ts`（SDK 流 → WireEvent）· `askTool.ts` / `filesTool.ts`（内置 MCP）
-- `http/` — `rest.ts`（health/fs/capabilities/sessions/file 下载/**git**/**REST 权限·问题应答**）· `fsbrowse.ts` · `git.ts`（`git status/diff` 解析为 `GitStatusDTO`）
+- `http/` — `rest.ts`（health/fs/capabilities/sessions/file 下载/**file 上传**（`POST /sessions/:id/upload`，原始字节经 `express.raw` 存到 `<dataDir>/uploads/<id>/`，回绝对路径供 agent Read）/**git**/**REST 权限·问题应答**）· `fsbrowse.ts` · `git.ts`（`git status/diff` 解析为 `GitStatusDTO`）
 - `ws/gateway.ts` — WS 网关（鉴权握手、多路复用、广播、心跳）。permission/question/state 事件**额外** `broadcastAll` 一条 `alert` 给所有连接客户端 → App 转成本端本地通知（取代旧的 FCM 推送）
 - `relay/agent.ts` — 可选拨出桥：opt-in 时向云中继开一条常驻控制 WS，把中继转发来的 HTTP/WS 重放到本机 loopback（`127.0.0.1:<port>`），**完全复用**现有 gateway/REST。`index.ts` 在 `server.listen` 回调里调 `startRelayAgent(cfg)`（未配置则 no-op）
+- `pairing.ts` — 配对 URI（`claude-remote://add?url=&token=&name=`）唯一真源；`index.ts` 启动用 `qrcode-terminal` 打印 LAN（+ relay）二维码，App 扫码一键添加 server。App 端镜像见 `app/src/api/pairing.ts`
+- **TodoWrite → `todos` 事件**：`transform.ts` 把 `TodoWrite` 工具调用转成独立的 `kind:'todos'` WireEvent（不再当普通 tool 卡片），驱动 App 顶部常驻任务进度面板
 
 **Relay（`relay/src/`，独立可部署服务）**
-- `index.ts` 启动（`RELAY_PORT`/`RELAY_HOST`/`RELAY_TOKEN`）· `relay.ts`（按 `serverId` 多路复用：`/agent` 控制通道 + `/s/:serverId/*` 反代）· `protocol.ts` — ★ 中继↔agent 线协议**真源**（与 `server/src/relay/agent.ts` 顶部的镜像手工同步）
+- `index.ts` 启动（`RELAY_PORT`/`RELAY_HOST`/`RELAY_TOKEN`/`RELAY_PUBLIC_URL`）· `relay.ts`（按 `serverId` 多路复用：`/agent` 控制通道 + `/s/:serverId/*` 反代；设了 `RELAY_PUBLIC_URL` 时每有 server 连入打印一张**仅地址**的配对二维码——中继无明文 token，App 扫后需手填）· `protocol.ts` — ★ 中继↔agent 线协议**真源**（与 `server/src/relay/agent.ts` 顶部的镜像手工同步）
 - App 不需改：把某个 server 的 `baseUrl` 填成 `https://relay/s/<serverId>`，`wsUrl()`/REST 自然拼出 `…/s/<id>/ws` 与 `…/s/<id>/api/*`，token 用 server **自己的** access token（中继只存其 sha256，逐请求校验）。LAN 与中继并存互不影响。详见 `relay/README.md`
 
 **App（`app/src/`）**
-- `app/` expo-router 屏幕：`index`（会话列表）· `new-session`（浏览 fs 选 cwd）· `settings`（多服务器）· `session/[id].tsx`（聊天主界面，最核心）
+- `app/` expo-router 屏幕：`index`（会话列表）· `new-session`（浏览 fs 选 cwd）· `settings`（多服务器，含 Scan QR 入口）· `scan`（expo-camera 扫配对二维码：完整码直接保存，relay 仅地址码则补填 token）· `session/[id].tsx`（聊天主界面，最核心）
 - `state/` — `store.ts`（zustand：连接/会话/视图/能力/未读 lastSeen/每日花费 spendByDay+预算/通知开关；收到 `alert` → 本地通知）· `transcript.ts`（WireEvent → TranscriptItem 归约）· `cwdHistory.ts`（最近/收藏工作目录，按服务器分桶）· `notifications.ts`（expo-notifications：前台展示、Android 渠道、approval 动作分类、权限申请、`presentLocalNotification` 发本地通知、点击/动作处理）
-- `api/` — `client.ts`（REST，含 git/REST 应答）· `ws.ts`（多路复用 WS，自动重连+重 attach）· `protocol.ts`（协议镜像）
-- `components/` — Diff / ToolCard / FileCard / ImageCard / ThinkingBlock / Markdown（代码块复制+轻量高亮）/ PermissionSheet / QuestionCards / CommandPalette / ModelEffortSheet / InfoSheet（含 7 天花费图+预算）/ GitSheet / FileMentionPalette / BottomSheet
+- `api/` — `client.ts`（REST，含 git/REST 应答/`uploadFile` 二进制上传）· `ws.ts`（多路复用 WS，自动重连+重 attach）· `protocol.ts`（协议镜像）
+- `components/` — Diff / ToolCard / FileCard / ImageCard / ThinkingBlock / Markdown（代码块复制+轻量高亮）/ PermissionSheet / QuestionCards / CommandPalette / ModelEffortSheet / InfoSheet（含 7 天花费图+预算）/ GitSheet / FileMentionPalette（@文件：子串排序匹配 + 命中高亮 + dotfile + 目录头/加载态）/ TaskProgress（常驻 TodoWrite 进度面板，来自 `view.todos`）/ SubagentPanel（常驻子代理面板，来自 `view.subagents`，仅运行中显示）/ AttachSheet（输入栏附件菜单：拍照/相册图片/文件——前两者走内联 base64 图片，文件走 `uploadFile` 上传后把绝对路径折进消息文本）/ BottomSheet
 - `theme/` — theme.ts + ThemeProvider.tsx
 
 ## 约定与坑（务必遵守）
@@ -55,7 +57,7 @@ install/  自启安装器（macOS launchd / Linux systemd）
 - **协议双份镜像**：`server/src/protocol.ts` 是真源，`app/src/api/protocol.ts` 是手工镜像。
   改任一端的线协议/DTO 必须同步另一端。
 - **权限用 `PreToolUse` hook**，不用 SDK 的 `canUseTool`（当前 SDK 版本该路径有 bug）。
-  策略见 `permissions.ts` 的 `decidePolicy`；只读工具 + 内置 MCP（`ask_user`/`send_file`）永远放行。
+  策略见 `permissions.ts` 的 `decidePolicy`；只读工具 + 内置 MCP（`ask_user`/`send_file`/`send_image`）永远放行。
 - **澄清问题用自定义 `ask_user` MCP**（`askTool.ts`），内置 `AskUserQuestion` 已被
   `disallowedTools` 禁用。系统提示里强制模型用 `ask_user` / `send_file` / `send_image`。
 - **`init` 去抖**：SDK 每个 turn 都重发 `system/init`，只有 session id **真正变化**时
@@ -63,13 +65,17 @@ install/  自启安装器（macOS launchd / Linux systemd）
 - **控制请求要给足超时**：`getContextUsage()` 冷启动可达 ~7–8s。`session.ts` 的
   `withControlTimeout` 对 context 用 15s，且超时只对当次降级、不永久锁死（否则会一直回退到
   单桶 "Conversation (estimated)" 估算）。
-- **文件下发路径安全**：`send_file` 暂存的真实路径**绝不出进程**，App 只能凭 `fileId`
-  经鉴权 REST 端点取字节。
+- **文件下发路径安全**：`send_file` / `send_image` 暂存的真实路径**绝不出进程**，App 只能凭
+  `fileId` 经鉴权 REST 端点取字节。**反向上传**（`POST /sessions/:id/upload`）落到
+  `<dataDir>/uploads/<id>/`，会话删除时（`manager.delete`）一并清理。
 - **effort 近似**：当前 SDK 无运行时 setEffort，用 `setMaxThinkingTokens` 的 thinking 预算映射。
 - **App 改动后**：`session/[id].tsx` 等改完跑 `npm run typecheck`，要看实机效果就打 APK 发手机。
 - **鉴权**：除 `/api/health` 外所有 HTTP + WS 握手都要带 Bearer token（env > `config.json` > 自动生成）。
 - **通知是纯本端**：已**移除 FCM/Expo 远程推送**（无 `push.ts`、无 `/api/push/*`、无 EAS FCM 凭据）。server 在 permission/question/turn-done 时 `broadcastAll` 一条 `alert` 给所有连接的 WS 客户端，App（`store._onMessage` → `presentLocalNotification`）转成 expo-notifications 本地通知。⚠️ **代价**：通知只在 App 进程存活且 WS 在线时（前台或后台短窗口）才会触发；被系统杀死后收不到——这是放弃 FCM 的固有取舍。通知内 Approve/Deny 仍走 **REST**（`POST /api/sessions/:id/permission|question`），不依赖在线 WS。正在前台查看的会话不重复弹横幅（`setActiveSession` 抑制）。
-- **原生依赖需重新打包**：`expo-notifications` / `expo-clipboard` 是原生模块，改完必须重打 APK（Expo Go 行为不同），不能只热重载 JS。
+- **原生依赖需重新打包**：`expo-notifications` / `expo-clipboard` / `expo-camera` /
+  `expo-document-picker` / `expo-file-system`（选文件 + 二进制上传）等是原生模块，改完必须重打
+  APK（Expo Go 行为不同），不能只热重载 JS。⚠️ App 端上传用 `FileSystem.uploadAsync(BINARY_CONTENT)`，
+  **别**用 `fetch(uri).blob()`（RN 里读本地文件不可靠）。
 
 ## 配置
 

@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import type {
   CreateSessionRequest,
   FsListResponse,
@@ -108,6 +109,42 @@ export class ApiClient {
   }
   fsMkdir(parent: string, name: string) {
     return this.req<{ path: string }>('/api/fs/mkdir', { method: 'POST', body: JSON.stringify({ parent, name }) });
+  }
+
+  /** Upload a picked file's bytes to the host. Returns the absolute path the
+   *  server saved it to, which the message then references so the agent can Read it.
+   *  Uses expo-file-system's binary upload (streams the file URI straight to the
+   *  server) — RN's `fetch(uri).blob()` is unreliable for local-file bodies. */
+  async uploadFile(
+    sessionId: string,
+    file: { uri: string; name: string; mime: string },
+  ): Promise<{ path: string; name: string; size: number }> {
+    const url =
+      `${this.baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/upload` +
+      `?name=${encodeURIComponent(file.name)}&mime=${encodeURIComponent(file.mime || '')}`;
+    let res: FileSystem.FileSystemUploadResult;
+    try {
+      res = await FileSystem.uploadAsync(url, file.uri, {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        headers: {
+          Authorization: `Bearer ${this.cfg.token}`,
+          'Content-Type': file.mime || 'application/octet-stream',
+        },
+      });
+    } catch (e: any) {
+      throw new ApiError(0, e?.message || 'Upload failed');
+    }
+    let body: any = {};
+    try {
+      body = res.body ? JSON.parse(res.body) : {};
+    } catch {
+      /* non-JSON error body */
+    }
+    if (res.status < 200 || res.status >= 300) {
+      throw new ApiError(res.status, body?.error || `HTTP ${res.status}`);
+    }
+    return body as { path: string; name: string; size: number };
   }
 
   wsUrl(): string {

@@ -68,6 +68,22 @@ export interface FileChange {
   content?: string;
 }
 
+/** One entry of the agent's TodoWrite checklist. */
+export interface TodoItem {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
+}
+
+/** One spawned `Task` subagent, for the always-on subagent panel. */
+export interface SubagentItem {
+  id: string;
+  type: string;
+  description: string;
+  status: 'running' | 'completed' | 'failed';
+  ts: number;
+}
+
 export type WireEvent =
   // A user turn (your message).
   | { kind: 'user'; id: string; text: string; imageCount?: number; ts: number }
@@ -101,6 +117,10 @@ export type WireEvent =
     }
   // A subagent (Task) lifecycle notice.
   | { kind: 'task'; id: string; status: 'started' | 'progress' | 'completed' | 'failed'; description: string; ts: number }
+  // The agent's current TodoWrite checklist (whole list, replace-on-each).
+  | { kind: 'todos'; id: string; items: TodoItem[]; ts: number }
+  // The session's spawned Task subagents (whole roster, replace-on-each).
+  | { kind: 'subagents'; id: string; items: SubagentItem[]; ts: number }
   // End of an assistant turn.
   | {
       kind: 'result';

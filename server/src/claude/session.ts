@@ -817,6 +817,11 @@ export class ClaudeSession extends EventEmitter {
     this.backlog.push(...events);
     if (this.backlog.length > MAX_BACKLOG) this.backlog.splice(0, this.backlog.length - MAX_BACKLOG);
   }
+  /** Prime live task state from a resumed transcript so a post-resume TaskUpdate
+   *  resolves against the right task (see LiveTransformer.seedTasks). */
+  seedTasks(messages: { type: string; message: unknown }[]): void {
+    this.transformer.seedTasks(messages as any);
+  }
   getOpenPermissionRequests(): PermissionRequest[] {
     return [...this.openPermissionRequests.values()];
   }

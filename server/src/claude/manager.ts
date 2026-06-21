@@ -227,6 +227,7 @@ export class SessionManager extends EventEmitter {
       try {
         const msgs = await getSessionMessages(rec.sdkSessionId, { dir: rec.cwd });
         s.seedBacklog(historyToEvents(msgs));
+        s.seedTasks(msgs);
         s.seedUsageFromHistory(msgs);
       } catch (e) {
         log.warn(`Could not seed history for ${id}:`, (e as Error).message);
@@ -331,6 +332,14 @@ export class SessionManager extends EventEmitter {
         log.warn(`SDK deleteSession(${sdkId}) failed:`, (e as Error).message);
       }
     }
+    // Remove any files the app uploaded for this session (see rest.ts upload route).
+    const uploadsDir = path.join(this.cfg.dataDir, 'uploads', id);
+    try {
+      fs.rmSync(uploadsDir, { recursive: true, force: true });
+    } catch (e) {
+      log.warn(`Failed to remove uploads dir for ${id}:`, (e as Error).message);
+    }
+
     const had = this.store.delete(id);
     this.saveStore();
     log.info(`Deleted session ${id}.`);

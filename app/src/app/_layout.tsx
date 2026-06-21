@@ -41,6 +41,7 @@ function ThemedApp() {
             <Stack.Screen name="index" options={{ title: 'Sessions' }} />
             <Stack.Screen name="settings" options={{ title: 'Servers', presentation: 'modal' }} />
             <Stack.Screen name="new-session" options={{ title: 'New session', presentation: 'modal' }} />
+            <Stack.Screen name="scan" options={{ title: 'Scan QR', presentation: 'modal' }} />
             <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
           </Stack>
         </SafeAreaProvider>

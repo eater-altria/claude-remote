@@ -28,7 +28,9 @@ function main(): void {
     console.log('[relay] No RELAY_TOKEN set — generated an ephemeral one (set RELAY_TOKEN in production).');
   }
 
-  const relay = new Relay({ relayToken });
+  const publicUrl = (process.env.RELAY_PUBLIC_URL || '').trim().replace(/\/+$/, '') || undefined;
+
+  const relay = new Relay({ relayToken, publicUrl });
   const server = http.createServer((req, res) => relay.handleRequest(req, res));
   server.on('upgrade', (req, socket, head) => relay.handleUpgrade(req, socket, head));
 
@@ -40,6 +42,7 @@ function main(): void {
     console.log(`  Listening on ${host}:${port}`);
     console.log(`  Agent endpoint:  wss://<this-host>/agent`);
     console.log(`  App URL form:    https://<this-host>/s/<serverId>`);
+    console.log(`  Public URL:      ${publicUrl ?? '(set RELAY_PUBLIC_URL to print pairing QRs)'}`);
     console.log(`  RELAY_TOKEN:     ${relayToken}`);
     console.log('───────────────────────────────────────────────');
   });

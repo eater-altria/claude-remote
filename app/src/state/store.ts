@@ -13,9 +13,11 @@ import type {
   QuestionRequest,
   ServerMessage,
   SessionMeta,
+  SubagentItem,
+  TodoItem,
   UsageDTO,
 } from '../api/protocol';
-import { applyEvent, reduceEvents, type TranscriptItem } from './transcript';
+import { applyEvent, latestSubagents, latestTodos, reduceEvents, type TranscriptItem } from './transcript';
 import { presentLocalNotification, setActiveSession } from './notifications';
 
 const LEGACY_CONFIG_KEY = 'claude-remote.config.v1';
@@ -43,6 +45,10 @@ export interface SessionView {
   items: TranscriptItem[];
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
+  /** The agent's current TodoWrite checklist (drives the task-progress panel). */
+  todos: TodoItem[];
+  /** The session's spawned Task subagents (drives the subagent panel). */
+  subagents: SubagentItem[];
   meta?: SessionMeta;
   capabilities?: Capabilities;
 }
@@ -143,12 +149,12 @@ export const useStore = create<StoreState>((set, get) => {
   const ensureView = (id: string): Record<string, SessionView> => {
     const views = get().views;
     if (views[id]) return views;
-    return { ...views, [id]: { items: [], permissions: [], questions: [], meta: undefined } };
+    return { ...views, [id]: { items: [], permissions: [], questions: [], todos: [], subagents: [], meta: undefined } };
   };
 
   const patchView = (id: string, fn: (v: SessionView) => SessionView) => {
     set((state) => {
-      const cur = state.views[id] ?? { items: [], permissions: [], questions: [] };
+      const cur = state.views[id] ?? { items: [], permissions: [], questions: [], todos: [], subagents: [] };
       return { views: { ...state.views, [id]: fn(cur) } };
     });
   };
@@ -403,10 +409,19 @@ export const useStore = create<StoreState>((set, get) => {
     _onMessage(msg: ServerMessage) {
       switch (msg.t) {
         case 'backlog':
-          patchView(msg.sessionId, (v) => ({ ...v, items: reduceEvents(msg.events), meta: msg.meta }));
+          patchView(msg.sessionId, (v) => ({ ...v, items: reduceEvents(msg.events), todos: latestTodos(msg.events), subagents: latestSubagents(msg.events), meta: msg.meta }));
           break;
         case 'event':
-          patchView(msg.sessionId, (v) => ({ ...v, items: applyEvent(v.items, msg.event) }));
+          // TodoWrite / Task subagents drive always-on panels, not transcript items.
+          if (msg.event.kind === 'todos') {
+            const items = msg.event.items;
+            patchView(msg.sessionId, (v) => ({ ...v, todos: items }));
+          } else if (msg.event.kind === 'subagents') {
+            const items = msg.event.items;
+            patchView(msg.sessionId, (v) => ({ ...v, subagents: items }));
+          } else {
+            patchView(msg.sessionId, (v) => ({ ...v, items: applyEvent(v.items, msg.event) }));
+          }
           break;
         case 'attached':
         case 'session_state': {
@@ -434,7 +449,7 @@ export const useStore = create<StoreState>((set, get) => {
           }
           break;
         case 'transcript_reset':
-          patchView(msg.sessionId, (v) => ({ ...v, items: [], permissions: [], questions: [], meta: msg.meta }));
+          patchView(msg.sessionId, (v) => ({ ...v, items: [], permissions: [], questions: [], todos: [], subagents: [], meta: msg.meta }));
           break;
         case 'permission_request':
           patchView(msg.sessionId, (v) => ({

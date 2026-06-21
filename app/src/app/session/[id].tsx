@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,11 +22,25 @@ import { ModelEffortSheet, modelLabel, effortLabel } from '../../components/Mode
 import { InfoSheet, type InfoKind } from '../../components/InfoSheet';
 import { GitSheet } from '../../components/GitSheet';
 import { FileMentionPalette } from '../../components/FileMentionPalette';
+import { TaskProgress } from '../../components/TaskProgress';
+import { SubagentPanel } from '../../components/SubagentPanel';
+import { AttachSheet } from '../../components/AttachSheet';
 import { FileCard } from '../../components/FileCard';
 import { ImageCard } from '../../components/ImageCard';
 import { PERMISSION_MODE_LABELS, type EffortLevel, type FsEntry, type PermissionMode, type SlashCommandDTO } from '../../api/protocol';
 
 const MODE_CYCLE: PermissionMode[] = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
+
+/** A file the user attached: uploaded to the host, then its absolute path is
+ *  folded into the outgoing message so the agent can Read it. */
+type PendingFile = { id: string; name: string; size: number; mime: string; path?: string; uploading: boolean; error?: boolean };
+
+function fmtBytes(n: number): string {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function fmtTime(ts: number): string {
   if (!ts) return '';
@@ -35,7 +50,7 @@ function fmtTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
-const EMPTY_VIEW: SessionView = { items: [], permissions: [], questions: [] };
+const EMPTY_VIEW: SessionView = { items: [], permissions: [], questions: [], todos: [], subagents: [] };
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -63,7 +78,10 @@ export default function ChatScreen() {
   const [modelEffortOpen, setModelEffortOpen] = React.useState(false);
   const [infoSheet, setInfoSheet] = React.useState<{ kind: InfoKind } | null>(null);
   const [pendingImages, setPendingImages] = React.useState<{ uri: string; mime: string; data: string }[]>([]);
+  const [pendingFiles, setPendingFiles] = React.useState<PendingFile[]>([]);
+  const [attachOpen, setAttachOpen] = React.useState(false);
   const [fileEntries, setFileEntries] = React.useState<FsEntry[]>([]);
+  const [fileLoading, setFileLoading] = React.useState(false);
   const [showJump, setShowJump] = React.useState(false);
   const listRef = React.useRef<FlatList>(null);
   // Whether the user is currently pinned to (or near) the bottom. Auto-scroll on
@@ -131,6 +149,8 @@ export default function ChatScreen() {
   const mentionSlash = mentionQuery.lastIndexOf('/');
   const mentionDir = mentionSlash >= 0 ? mentionQuery.slice(0, mentionSlash) : '';
   const mentionPrefix = mentionSlash >= 0 ? mentionQuery.slice(mentionSlash + 1) : mentionQuery;
+  // Reveal dotfiles only once the user starts typing a leading dot.
+  const mentionHidden = mentionPrefix.startsWith('.');
 
   // Load the directory's entries when the mention's directory part changes (not on
   // every keystroke — the prefix is filtered locally below).
@@ -141,26 +161,45 @@ export default function ChatScreen() {
     if (!cwd || !client) return;
     const listPath = mentionDir ? `${cwd}/${mentionDir}` : cwd;
     let cancelled = false;
+    setFileLoading(true);
     client
-      .fsList(listPath)
+      .fsList(listPath, mentionHidden)
       .then((res) => {
         if (!cancelled) setFileEntries(res.entries);
       })
       .catch(() => {
         if (!cancelled) setFileEntries([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFileLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [mentionActive, mentionDir, meta?.cwd]);
+  }, [mentionActive, mentionDir, mentionHidden, meta?.cwd]);
 
+  // Rank matches: prefix hits before substring hits before the rest; folders
+  // float up within a tie so they're easy to drill into. Substring (not just
+  // prefix) matching makes the picker forgiving of where in the name you type.
   const mentionMatches = React.useMemo(() => {
     if (!mentionActive) return [];
     const p = mentionPrefix.toLowerCase();
-    return fileEntries
-      .filter((e) => e.name.toLowerCase().startsWith(p))
-      .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
-      .slice(0, 50);
+    const scored: { e: FsEntry; rank: number }[] = [];
+    for (const e of fileEntries) {
+      const n = e.name.toLowerCase();
+      let rank: number;
+      if (!p) rank = 0;
+      else if (n.startsWith(p)) rank = 0;
+      else if (n.includes(p)) rank = 1;
+      else continue;
+      scored.push({ e, rank });
+    }
+    scored.sort((a, b) => {
+      if (a.e.isDir !== b.e.isDir) return a.e.isDir ? -1 : 1;
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      return a.e.name.localeCompare(b.e.name);
+    });
+    return scored.slice(0, 50).map((s) => s.e);
   }, [mentionActive, mentionPrefix, fileEntries]);
 
   const onSelectMention = (entry: FsEntry) => {
@@ -229,21 +268,33 @@ export default function ChatScreen() {
     scrollToBottom();
   };
 
+  const uploadedFiles = pendingFiles.filter((f) => f.path && !f.error);
+  const filesUploading = pendingFiles.some((f) => f.uploading);
+  const hasContent = !!text.trim() || pendingImages.length > 0 || uploadedFiles.length > 0;
+  const canSend = hasContent && !filesUploading;
+
   const onSend = () => {
     const t = text.trim();
     const imgs = pendingImages;
-    if (!t && imgs.length === 0) return;
-    // Client-driven commands open native UI instead of being sent (text-only, no images).
-    if (t && imgs.length === 0) {
+    if (!canSend) return;
+    // Client-driven commands open native UI instead of being sent (text-only, no attachments).
+    if (t && imgs.length === 0 && pendingFiles.length === 0) {
       const clientCmd = t.match(/^\/(model|effort|context|usage)\b/);
       if (clientCmd && interceptCommand(clientCmd[1])) {
         setText('');
         return;
       }
     }
-    sendMessage(sessionId, t, imgs.length ? imgs.map((i) => ({ mime: i.mime, data: i.data })) : undefined);
+    // Fold uploaded file paths into the message so the agent knows where to Read them.
+    let body = t;
+    if (uploadedFiles.length) {
+      const refs = uploadedFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n');
+      body = (t ? `${t}\n\n` : '') + `Attached file${uploadedFiles.length > 1 ? 's' : ''}:\n${refs}`;
+    }
+    sendMessage(sessionId, body, imgs.length ? imgs.map((i) => ({ mime: i.mime, data: i.data })) : undefined);
     setText('');
     setPendingImages([]);
+    setPendingFiles([]);
     setFullscreen(false);
     scrollToBottom();
   };
@@ -281,6 +332,55 @@ export default function ChatScreen() {
   };
 
   const removeImage = (idx: number) => setPendingImages((prev) => prev.filter((_, i) => i !== idx));
+
+  const takePhoto = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return;
+      const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], base64: true, quality: 0.6 });
+      if (res.canceled) return;
+      const picked = res.assets
+        .filter((a) => a.base64)
+        .map((a) => ({ uri: a.uri, mime: a.mimeType || 'image/jpeg', data: a.base64 as string }));
+      setPendingImages((prev) => [...prev, ...picked].slice(0, 6));
+    } catch {
+      /* user dismissed or camera unavailable */
+    }
+  };
+
+  const pickFile = async () => {
+    let asset: DocumentPicker.DocumentPickerAsset;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+      if (res.canceled || !res.assets?.length) return;
+      asset = res.assets[0];
+    } catch {
+      return; // user dismissed or picker unavailable
+    }
+    const id = `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const mime = asset.mimeType || 'application/octet-stream';
+    setPendingFiles((prev) => [...prev, { id, name: asset.name, size: asset.size ?? 0, mime, uploading: true }].slice(0, 8));
+    const client = getClient();
+    if (!client) {
+      setPendingFiles((prev) => prev.map((f) => (f.id === id ? { ...f, uploading: false, error: true } : f)));
+      return;
+    }
+    try {
+      const up = await client.uploadFile(sessionId, { uri: asset.uri, name: asset.name, mime });
+      setPendingFiles((prev) => prev.map((f) => (f.id === id ? { ...f, uploading: false, path: up.path, size: up.size } : f)));
+    } catch {
+      setPendingFiles((prev) => prev.map((f) => (f.id === id ? { ...f, uploading: false, error: true } : f)));
+    }
+  };
+
+  const removeFile = (id: string) => setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+
+  // The sheet must close before a native picker launches (Android won't open a
+  // picker while a Modal is still mounted), so we dismiss, wait a beat, then go.
+  const runAttach = (fn: () => void) => {
+    setAttachOpen(false);
+    setTimeout(fn, 280);
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['bottom']}>
@@ -331,8 +431,14 @@ export default function ChatScreen() {
 
         {paletteOpen ? (
           <CommandPalette commands={commands} query={paletteQuery} onSelect={onSelectCommand} />
-        ) : mentionActive && mentionMatches.length > 0 ? (
-          <FileMentionPalette entries={mentionMatches} onSelect={onSelectMention} />
+        ) : mentionActive ? (
+          <FileMentionPalette
+            entries={mentionMatches}
+            query={mentionPrefix}
+            dir={mentionDir}
+            loading={fileLoading}
+            onSelect={onSelectMention}
+          />
         ) : null}
 
         {pendingImages.length > 0 ? (
@@ -352,6 +458,43 @@ export default function ChatScreen() {
             ))}
           </ScrollView>
         ) : null}
+
+        {pendingFiles.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.previewBar}
+            contentContainerStyle={{ gap: space.sm, paddingHorizontal: space.md, alignItems: 'center' }}
+          >
+            {pendingFiles.map((f) => (
+              <View key={f.id} style={[styles.fileChip, f.error && { borderColor: colors.danger }]}>
+                {f.uploading ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Ionicons
+                    name={f.error ? 'alert-circle' : 'document-text-outline'}
+                    size={18}
+                    color={f.error ? colors.danger : colors.accent}
+                  />
+                )}
+                <View style={{ maxWidth: 150 }}>
+                  <Text style={styles.fileChipName} numberOfLines={1}>
+                    {f.name}
+                  </Text>
+                  <Text style={styles.fileChipMeta} numberOfLines={1}>
+                    {f.error ? 'Upload failed' : f.uploading ? 'Uploading…' : fmtBytes(f.size)}
+                  </Text>
+                </View>
+                <Pressable onPress={() => removeFile(f.id)} hitSlop={6}>
+                  <Ionicons name="close-circle" size={18} color={colors.textFaint} />
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        <SubagentPanel subagents={view.subagents} />
+        <TaskProgress todos={view.todos} />
 
         {showPlanBar ? (
           <View style={styles.planBar}>
@@ -375,8 +518,8 @@ export default function ChatScreen() {
         ) : null}
 
         <View style={styles.inputBar}>
-          <Pressable style={styles.attachBtn} onPress={pickImage} hitSlop={6} disabled={state === 'closed' || state === 'error'}>
-            <Ionicons name="image-outline" size={24} color={colors.textDim} />
+          <Pressable style={styles.attachBtn} onPress={() => setAttachOpen(true)} hitSlop={6} disabled={state === 'closed' || state === 'error'}>
+            <Ionicons name="add-circle-outline" size={26} color={colors.textDim} />
           </Pressable>
           <View style={styles.inputWrap}>
             <TextInput
@@ -398,9 +541,9 @@ export default function ChatScreen() {
             </Pressable>
           ) : (
             <Pressable
-              style={[styles.sendBtn, !text.trim() && pendingImages.length === 0 && { opacity: 0.4 }]}
+              style={[styles.sendBtn, !canSend && { opacity: 0.4 }]}
               onPress={onSend}
-              disabled={!text.trim() && pendingImages.length === 0}
+              disabled={!canSend}
             >
               <Ionicons name="arrow-up" size={22} color={colors.onAccent} />
             </Pressable>
@@ -425,6 +568,14 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <AttachSheet
+        visible={attachOpen}
+        onClose={() => setAttachOpen(false)}
+        onCamera={() => runAttach(takePhoto)}
+        onImage={() => runAttach(pickImage)}
+        onFile={() => runAttach(pickFile)}
+      />
 
       <GitSheet visible={gitOpen} sessionId={sessionId} onClose={() => setGitOpen(false)} />
 
@@ -462,9 +613,9 @@ export default function ChatScreen() {
                 </Pressable>
               ) : (
                 <Pressable
-                  style={[styles.fsSend, !text.trim() && pendingImages.length === 0 && { opacity: 0.4 }]}
+                  style={[styles.fsSend, !canSend && { opacity: 0.4 }]}
                   onPress={onSend}
-                  disabled={!text.trim() && pendingImages.length === 0}
+                  disabled={!canSend}
                 >
                   <Ionicons name="arrow-up" size={20} color={colors.onAccent} />
                 </Pressable>
@@ -611,6 +762,19 @@ const makeStyles = (c: Palette) =>
     thumb: { width: 60, height: 60, borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: c.border },
     thumbImg: { width: '100%', height: '100%' },
     thumbX: { position: 'absolute', top: 1, right: 1, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 10 },
+    fileChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.sm,
+      paddingVertical: space.sm,
+      paddingHorizontal: space.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.card,
+    },
+    fileChipName: { color: c.text, fontSize: font.size.sm, fontWeight: '600' },
+    fileChipMeta: { color: c.textFaint, fontSize: font.size.xs },
     userImages: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
     userImagesText: { color: c.user, fontSize: font.size.xs, fontWeight: '600' },
   });

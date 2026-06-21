@@ -2,7 +2,7 @@
   "expo": {
     "name": "Claude Remote",
     "slug": "claude-remote",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "claude-remote",
@@ -20,7 +20,7 @@
       "package": "com.claude_remote.app",
       "predictiveBackGestureEnabled": false,
       "googleServicesFile": "./google-services.json",
-      "versionCode": 6
+      "versionCode": 7
     },
     "web": {
       "output": "static",
@@ -55,13 +55,20 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Claude Remote to access your photos so you can send images to Claude."
+          "photosPermission": "Allow Claude Remote to access your photos so you can send images to Claude.",
+          "cameraPermission": "Allow Claude Remote to use the camera so you can take a photo to send to Claude."
         }
       ],
       [
         "expo-notifications",
         {
           "color": "#C96442"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Claude Remote to use the camera to scan a server's pairing QR code."
         }
       ]
     ],

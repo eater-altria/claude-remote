@@ -251,5 +251,37 @@ export function buildApp(cfg: AppConfig, manager: SessionManager) {
     }),
   );
 
+  // --- File upload (phone → host) -----------------------------------------
+  // The app sends raw file bytes; we persist them under the data dir (keeping
+  // the user's project tree clean) and hand back an absolute path the agent can
+  // Read. `name`/`mime` ride in the query string; the body is the raw file.
+  app.post(
+    '/api/sessions/:id/upload',
+    express.raw({ type: () => true, limit: '64mb' }),
+    wrap((req, res) => {
+      const meta = manager.getMeta(req.params.id);
+      if (!meta) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      const body = req.body;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        res.status(400).json({ error: 'Empty upload' });
+        return;
+      }
+      const rawName = typeof req.query.name === 'string' ? req.query.name : 'upload';
+      const displayName = path.basename(rawName).trim() || 'upload';
+      // ASCII-safe on-disk name (the absolute path is what the agent Reads);
+      // the original display name is returned for the app's attachment chip.
+      const safe = displayName.replace(/[^\w.\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || 'upload';
+      const dir = path.join(cfg.dataDir, 'uploads', req.params.id);
+      fs.mkdirSync(dir, { recursive: true });
+      const dest = path.join(dir, `${Date.now().toString(36)}-${safe}`);
+      fs.writeFileSync(dest, body);
+      log.info(`upload ${dest} (${body.length} bytes) for session ${req.params.id}`);
+      res.json({ path: dest, name: displayName, size: body.length });
+    }),
+  );
+
   return app;
 }

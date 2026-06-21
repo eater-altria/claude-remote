@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import qrcode from 'qrcode-terminal';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { AgentToRelay, RelayToAgent } from './protocol.js';
 
@@ -28,6 +29,10 @@ interface Agent {
 export interface RelayOptions {
   /** Shared secret an agent must present (?token=) to register. */
   relayToken: string;
+  /** Public base URL this relay is reachable at, e.g. https://relay.example.com.
+   *  When set, a pairing QR (address only — the relay never sees the token) is
+   *  printed each time a server connects, for onboarding from the relay host. */
+  publicUrl?: string;
 }
 
 export class Relay {
@@ -185,6 +190,7 @@ export class Relay {
         this.agents.set(msg.serverId, agent);
         this.send(ws, { t: 'registered' });
         console.log(`[relay] agent registered: ${msg.serverId}${msg.name ? ` (${msg.name})` : ''}`);
+        this.printPairingQr(msg.serverId, msg.name);
         return;
       }
 
@@ -308,6 +314,21 @@ export class Relay {
       if (lk === 'content-type' || lk === 'content-disposition' || lk === 'cache-control') out[lk] = v;
     }
     return out;
+  }
+
+  /** Print a scannable pairing QR for a freshly-connected server. The relay only
+   *  holds a hash of the token, so this URI carries the address only; the app
+   *  prefills it and asks the user to paste the token (printed by the server). */
+  private printPairingQr(serverId: string, name?: string): void {
+    if (!this.opts.publicUrl) return;
+    const url = `${this.opts.publicUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(serverId)}`;
+    const p = new URLSearchParams({ url });
+    if (name) p.set('name', name);
+    const uri = `claude-remote://add?${p.toString()}`;
+    qrcode.generate(uri, { small: true }, (qr) => {
+      console.log(`\n[relay] Pairing QR for ${serverId}${name ? ` (${name})` : ''} — scan in the app, then paste the server token:`);
+      console.log(qr);
+    });
   }
 
   private send(ws: WebSocket, msg: RelayToAgent): void {

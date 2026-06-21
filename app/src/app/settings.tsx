@@ -2,6 +2,7 @@ import React from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useHeaderHeight } from 'expo-router/react-navigation';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useStore } from '../state/store';
 import { ApiClient, type ServerProfile } from '../api/client';
@@ -90,6 +91,7 @@ export default function SettingsScreen() {
   const updateServer = useStore((s) => s.updateServer);
   const removeServer = useStore((s) => s.removeServer);
   const switchServer = useStore((s) => s.switchServer);
+  const router = useRouter();
 
   const [editing, setEditing] = React.useState<Editing | null>(null);
 
@@ -191,9 +193,13 @@ export default function SettingsScreen() {
         </View>
       )}
 
+      <Pressable style={[styles.addBtn, styles.scanBtn]} onPress={() => router.push('/scan')}>
+        <Ionicons name="qr-code-outline" size={20} color={colors.onAccent} />
+        <Text style={[styles.addBtnText, { color: colors.onAccent }]}>Scan QR</Text>
+      </Pressable>
       <Pressable style={styles.addBtn} onPress={() => setEditing({ id: null, name: '', url: '', token: '' })}>
         <Ionicons name="add" size={20} color={colors.accent} />
-        <Text style={styles.addBtnText}>Add server</Text>
+        <Text style={styles.addBtnText}>Add manually</Text>
       </Pressable>
     </ScrollView>
   );
@@ -345,6 +351,7 @@ const makeStyles = (c: Palette) =>
 
     addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm, marginTop: space.lg, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: c.border, borderStyle: 'dashed' },
     addBtnText: { color: c.accent, fontWeight: '700', fontSize: font.size.md },
+    scanBtn: { backgroundColor: c.accent, borderStyle: 'solid', borderColor: c.accent },
 
     result: { flexDirection: 'row', gap: space.sm, alignItems: 'center', padding: space.md, borderRadius: radius.md, marginTop: space.lg },
     resultText: { fontSize: font.size.sm, flex: 1 },
