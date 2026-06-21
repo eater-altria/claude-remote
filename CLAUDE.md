@@ -9,10 +9,12 @@
 ## 仓库布局
 
 ```
-server/   Node + TypeScript 服务（Claude Agent SDK 封装）— ESM
-app/      Expo ~56 / RN 0.85 / React 19 App（expo-router）— Android 为主
-relay/    可选云中继：本机 server 拨出 → 中继反代 app 流量（跨网段时用）— ESM
-install/  自启安装器（macOS launchd / Linux systemd）
+server/      Node + TypeScript 服务（Claude Agent SDK 封装）— ESM
+app/         Expo ~56 / RN 0.85 / React 19 App（expo-router）— Android 为主
+flutter-app/ Flutter 客户端（与 app/ 功能对等，跨平台：Android/iOS/web/桌面）
+codegen/     协议代码生成：server/src/protocol.ts → app 的 TS 镜像 + flutter 的 Dart 模型
+relay/       可选云中继：本机 server 拨出 → 中继反代 app 流量（跨网段时用）— ESM
+install/     自启安装器（macOS launchd / Linux systemd）
 ```
 
 ## 常用命令
@@ -28,6 +30,16 @@ install/  自启安装器（macOS launchd / Linux systemd）
 - 本地打 preview APK：`eas build --platform android --profile preview --local --non-interactive`
   - 用本地 keystore（`app/credentials.json`），产物写到 `app/build-<时间戳>.apk`，约 2 分钟
   - 完成后用 `mcp__files__send_file` 把 APK 发到手机
+
+**Codegen**（`cd codegen`）
+- `npm install`（首次）· `npm run gen` — 改完 `server/src/protocol.ts` 必跑，重生成
+  `app/src/api/protocol.gen.ts` 与 `flutter-app/lib/protocol/protocol.gen.dart`
+- `npm run schema` — debug：dump 派生出的 JSON Schema
+
+**Flutter App**（`cd flutter-app`）
+- 首次：`flutter create .`（生成 android/ios 等原生脚手架，不覆盖 lib/ 与 pubspec）→ `flutter pub get`
+- `flutter analyze`（提交前必跑，等价 typecheck）· `flutter run` / `flutter build apk`
+- ⚠️ 本机未装 Flutter/Dart 工具链——首次 `flutter analyze` 是真正的编译关
 
 ## 架构地图
 
@@ -54,8 +66,17 @@ install/  自启安装器（macOS launchd / Linux systemd）
 
 ## 约定与坑（务必遵守）
 
-- **协议双份镜像**：`server/src/protocol.ts` 是真源，`app/src/api/protocol.ts` 是手工镜像。
-  改任一端的线协议/DTO 必须同步另一端。
+- **协议代码生成（取代旧的手工双份镜像）**：`server/src/protocol.ts` 是**唯一真源**。改完它
+  必须 `cd codegen && npm run gen`，会重生成 `app/src/api/protocol.gen.ts`（TS 逐字副本，
+  `app/src/api/protocol.ts` 只 `export *` 转发，旧导入路径/类型名不变）与
+  `flutter-app/lib/protocol/protocol.gen.dart`（Dart：可辨识联合→sealed class、字面量联合→enum、
+  interface→带 fromJson/toJson 的类）。`.gen.*` 文件带 DO-NOT-EDIT 头，**别**手改。
+  ⚠️ 仅生成**类型**；protocol.ts 里的 UI 常量（`PERMISSION_MODE_LABELS`/`EFFORT_LEVELS`）不入 schema，
+  Flutter 侧的展示镜像在 `flutter-app/lib/theme/labels.dart`，`PROTOCOL_VERSION` 生成为 `kProtocolVersion`。
+- **Flutter 端与 app/ 一一对应**：`api/`(client/ws/pairing)·`state/`(store=ChangeNotifier/transcript/
+  notifications/cwd_history)·`screens/`·`components/`·`theme/`。状态用 `provider` 的
+  `ChangeNotifierProvider<Store>`；通知同样纯本端（WS `alert` → 本地通知，无 FCM）。原生权限
+  （相机/相册/通知/cleartext http）需在 `flutter create .` 后补进 manifest/Info.plist。
 - **权限用 `PreToolUse` hook**，不用 SDK 的 `canUseTool`（当前 SDK 版本该路径有 bug）。
   策略见 `permissions.ts` 的 `decidePolicy`；只读工具 + 内置 MCP（`ask_user`/`send_file`/`send_image`）永远放行。
 - **澄清问题用自定义 `ask_user` MCP**（`askTool.ts`），内置 `AskUserQuestion` 已被

@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { stat, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { GitStatusDTO, GitFileChange } from '../protocol.js';
 
 /** Run git with array args (no shell, so no injection) inside `cwd`. */
@@ -80,7 +82,9 @@ export async function gitStatus(cwd: string): Promise<GitStatusDTO> {
   }
 
   const [statusOut, unstaged, staged] = await Promise.all([
-    git(cwd, ['status', '--porcelain=v1', '--branch']).catch(() => ''),
+    // `--untracked-files=all` expands new directories into individual files so
+    // each one can be opened and diffed (a collapsed "dir/" entry can't be).
+    git(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=all']).catch(() => ''),
     git(cwd, ['diff', '--shortstat']).catch(() => ''),
     git(cwd, ['diff', '--cached', '--shortstat']).catch(() => ''),
   ]);
@@ -111,13 +115,37 @@ export async function gitStatus(cwd: string): Promise<GitStatusDTO> {
   const u = parseShortstat(unstaged);
   const s = parseShortstat(staged);
 
+  // `--shortstat` only covers tracked changes; untracked ('??') files contribute
+  // nothing. Count their lines so the +N stat reflects newly-added files too
+  // (e.g. a whole new directory). Bounded reads, binary files skipped.
+  let untrackedInsertions = 0;
+  await Promise.all(
+    files
+      .filter((f) => f.code === '??')
+      .map(async (f) => {
+        try {
+          const abs = join(cwd, f.path);
+          const st = await stat(abs);
+          if (!st.isFile() || st.size > 5_000_000) return;
+          const buf = await readFile(abs);
+          if (buf.includes(0)) return; // binary
+          let lines = 0;
+          for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0a) lines++;
+          if (buf.length > 0 && buf[buf.length - 1] !== 0x0a) lines++; // last line w/o newline
+          untrackedInsertions += lines;
+        } catch {
+          /* unreadable / quoted path — skip */
+        }
+      }),
+  );
+
   return {
     isRepo: true,
     branch,
     ahead,
     behind,
     files,
-    insertions: u.insertions + s.insertions,
+    insertions: u.insertions + s.insertions + untrackedInsertions,
     deletions: u.deletions + s.deletions,
     clean: files.length === 0,
   };

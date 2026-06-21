@@ -2,7 +2,7 @@
   "expo": {
     "name": "Claude Remote",
     "slug": "claude-remote",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "claude-remote",
@@ -20,7 +20,7 @@
       "package": "com.claude_remote.app",
       "predictiveBackGestureEnabled": false,
       "googleServicesFile": "./google-services.json",
-      "versionCode": 7
+      "versionCode": 8
     },
     "web": {
       "output": "static",
@@ -48,7 +48,9 @@
         {
           "android": {
             "usesCleartextTraffic": true,
-            "buildArchs": ["arm64-v8a"]
+            "buildArchs": [
+              "arm64-v8a"
+            ]
           }
         }
       ],
